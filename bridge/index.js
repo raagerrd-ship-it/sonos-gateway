@@ -23,7 +23,8 @@ function loadSonosConfig() {
   return {
     sonosIp: process.env.SONOS_IP || '192.168.1.175',
     sonosName: null,
-    sonosUuid: null
+    sonosUuid: null,
+    knownDevices: []
   };
 }
 
