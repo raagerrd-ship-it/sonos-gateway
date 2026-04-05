@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sonos Proxy</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a; color: #e0e0e0; min-height: 100vh;
+    }
+    .container { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 4px; color: #fff; }
+    .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 24px; }
+    
+    /* Now Playing */
+    .now-playing {
+      background: #161616; border-radius: 12px; padding: 16px;
+      margin-bottom: 24px; border: 1px solid #222;
+    }
+    .now-playing-header { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+    .now-playing-content { display: flex; gap: 12px; align-items: center; }
+    .now-playing-art {
+      width: 64px; height: 64px; border-radius: 8px; background: #222;
+      object-fit: cover; flex-shrink: 0;
+    }
+    .now-playing-art-placeholder {
+      width: 64px; height: 64px; border-radius: 8px; background: #222;
+      display: flex; align-items: center; justify-content: center; color: #444; font-size: 24px; flex-shrink: 0;
+    }
+    .now-playing-info { flex: 1; min-width: 0; }
+    .now-playing-track { font-weight: 600; font-size: 0.95rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .now-playing-artist { color: #888; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .now-playing-state {
+      display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem;
+      font-weight: 600; text-transform: uppercase; margin-top: 4px;
+    }
+    .state-playing { background: #1a3a1a; color: #4ade80; }
+    .state-paused { background: #3a3a1a; color: #facc15; }
+    .state-idle { background: #1a1a1a; color: #666; }
+    
+    /* Devices */
+    .section-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px;
+    }
+    .section-title { font-size: 0.85rem; font-weight: 600; color: #aaa; }
+    .btn {
+      padding: 6px 14px; border-radius: 6px; border: 1px solid #333;
+      background: #1a1a1a; color: #ccc; font-size: 0.8rem; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #252525; border-color: #444; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-scanning { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    
+    .device-list { display: flex; flex-direction: column; gap: 8px; }
+    .device-card {
+      background: #161616; border: 1px solid #222; border-radius: 10px;
+      padding: 14px 16px; cursor: pointer; transition: all 0.15s;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .device-card:hover { border-color: #444; background: #1c1c1c; }
+    .device-card.active { border-color: #4ade80; background: #0d1f0d; }
+    .device-name { font-weight: 600; font-size: 0.9rem; color: #fff; }
+    .device-meta { font-size: 0.75rem; color: #666; margin-top: 2px; }
+    .device-badge {
+      font-size: 0.65rem; padding: 2px 8px; border-radius: 4px;
+      background: #1a3a1a; color: #4ade80; font-weight: 600;
+    }
+    
+    .empty-state { text-align: center; padding: 32px; color: #555; font-size: 0.85rem; }
+    .status-bar { margin-top: 24px; font-size: 0.7rem; color: #444; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔊 Sonos Proxy</h1>
+    <p class="subtitle">Välj aktiv Sonos-högtalare</p>
+    
+    <!-- Now Playing -->
+    <div class="now-playing" id="nowPlaying">
+      <div class="now-playing-header">Nu spelas</div>
+      <div class="now-playing-content" id="nowPlayingContent">
+        <div class="now-playing-art-placeholder">♪</div>
+        <div class="now-playing-info">
+          <div class="now-playing-track" style="color:#555">Ingen uppspelning</div>
+          <div class="now-playing-artist">—</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Devices -->
+    <div class="section-header">
+      <span class="section-title">Enheter på nätverket</span>
+      <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
+    </div>
+    <div class="device-list" id="deviceList">
+      <div class="empty-state">Klicka "Skanna" för att hitta Sonos-enheter</div>
+    </div>
+    
+    <div class="status-bar" id="statusBar">—</div>
+  </div>
+  
+  <script>
+    let currentIp = null;
+    let eventSource = null;
+    
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/sonos/config');
+        const data = await res.json();
+        if (data.ok) {
+          currentIp = data.currentIp;
+          document.getElementById('statusBar').textContent = `Aktiv: ${data.sonosName || data.currentIp}`;
+        }
+      } catch (e) {}
+    }
+    
+    async function scanDevices() {
+      const btn = document.getElementById('scanBtn');
+      btn.disabled = true;
+      btn.textContent = 'Skannar...';
+      btn.classList.add('btn-scanning');
+      
+      try {
+        const res = await fetch('/api/sonos/discover');
+        const data = await res.json();
+        currentIp = data.currentIp;
+        renderDevices(data.devices || []);
+      } catch (e) {
+        document.getElementById('deviceList').innerHTML = '<div class="empty-state">Skanningen misslyckades</div>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Skanna';
+        btn.classList.remove('btn-scanning');
+      }
+    }
+    
+    function renderDevices(devices) {
+      const list = document.getElementById('deviceList');
+      if (devices.length === 0) {
+        list.innerHTML = '<div class="empty-state">Inga Sonos-enheter hittades</div>';
+        return;
+      }
+      
+      list.innerHTML = devices.map(d => `
+        <div class="device-card ${d.ip === currentIp ? 'active' : ''}" onclick="selectDevice('${d.ip}', '${(d.name || '').replace(/'/g, "\\'")}', '${d.uuid || ''}')">
+          <div>
+            <div class="device-name">${d.name || 'Okänd'}</div>
+            <div class="device-meta">${d.ip} · ${d.model || 'Sonos'}</div>
+          </div>
+          ${d.ip === currentIp ? '<span class="device-badge">AKTIV</span>' : ''}
+        </div>
+      `).join('');
+    }
+    
+    async function selectDevice(ip, name, uuid) {
+      if (ip === currentIp) return;
+      try {
+        const res = await fetch('/api/sonos/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sonosIp: ip, sonosName: name, sonosUuid: uuid })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          currentIp = ip;
+          document.getElementById('statusBar').textContent = `Bytte till: ${name || ip}`;
+          // Re-render active state
+          document.querySelectorAll('.device-card').forEach(card => {
+            const cardIp = card.querySelector('.device-meta')?.textContent?.split(' · ')[0];
+            card.classList.toggle('active', cardIp === ip);
+            const badge = card.querySelector('.device-badge');
+            if (badge && cardIp !== ip) badge.remove();
+            if (!badge && cardIp === ip) {
+              const span = document.createElement('span');
+              span.className = 'device-badge';
+              span.textContent = 'AKTIV';
+              card.appendChild(span);
+            }
+          });
+          // Reconnect SSE
+          connectSSE();
+        }
+      } catch (e) {
+        document.getElementById('statusBar').textContent = 'Fel vid byte av enhet';
+      }
+    }
+    
+    function connectSSE() {
+      if (eventSource) { eventSource.close(); }
+      eventSource = new EventSource('/api/sonos/events');
+      eventSource.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          updateNowPlaying(data);
+        } catch (err) {}
+      };
+    }
+    
+    function updateNowPlaying(data) {
+      const container = document.getElementById('nowPlayingContent');
+      const isPlaying = data.playbackState === 'PLAYBACK_STATE_PLAYING';
+      const isPaused = data.playbackState === 'PLAYBACK_STATE_PAUSED';
+      const hasTrack = data.trackName;
+      
+      if (!hasTrack && !isPlaying && !isPaused) {
+        container.innerHTML = `
+          <div class="now-playing-art-placeholder">♪</div>
+          <div class="now-playing-info">
+            <div class="now-playing-track" style="color:#555">Ingen uppspelning</div>
+            <div class="now-playing-artist">—</div>
+          </div>
+        `;
+        return;
+      }
+      
+      const stateClass = isPlaying ? 'state-playing' : isPaused ? 'state-paused' : 'state-idle';
+      const stateText = isPlaying ? 'Spelar' : isPaused ? 'Pausad' : 'Stoppad';
+      
+      const artHtml = data.albumArtUri
+        ? `<img class="now-playing-art" src="${data.albumArtUri}" onerror="this.outerHTML='<div class=\\'now-playing-art-placeholder\\'>♪</div>'">`
+        : '<div class="now-playing-art-placeholder">♪</div>';
+      
+      container.innerHTML = `
+        ${artHtml}
+        <div class="now-playing-info">
+          <div class="now-playing-track">${data.trackName || 'Okänd'}</div>
+          <div class="now-playing-artist">${data.artistName || '—'}${data.albumName ? ' · ' + data.albumName : ''}</div>
+          <span class="now-playing-state ${stateClass}">${stateText}</span>
+        </div>
+      `;
+    }
+    
+    // Init
+    loadConfig();
+    connectSSE();
+  </script>
+</body>
+</html>
