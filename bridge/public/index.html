@@ -105,6 +105,7 @@
   </div>
   
   <script>
+    let currentUuid = null;
     let currentIp = null;
     let eventSource = null;
     
@@ -113,8 +114,14 @@
         const res = await fetch('/api/sonos/config');
         const data = await res.json();
         if (data.ok) {
+          currentUuid = data.sonosUuid;
           currentIp = data.currentIp;
-          document.getElementById('statusBar').textContent = `Aktiv: ${data.sonosName || data.currentIp}`;
+          const name = data.sonosName || data.currentIp || '—';
+          document.getElementById('statusBar').textContent = `Aktiv: ${name}`;
+          // Show cached devices immediately
+          if (data.knownDevices && data.knownDevices.length > 0) {
+            renderDevices(data.knownDevices);
+          }
         }
       } catch (e) {}
     }
@@ -128,6 +135,7 @@
       try {
         const res = await fetch('/api/sonos/discover');
         const data = await res.json();
+        currentUuid = data.currentUuid;
         currentIp = data.currentIp;
         renderDevices(data.devices || []);
       } catch (e) {
@@ -146,19 +154,23 @@
         return;
       }
       
-      list.innerHTML = devices.map(d => `
-        <div class="device-card ${d.ip === currentIp ? 'active' : ''}" onclick="selectDevice('${d.ip}', '${(d.name || '').replace(/'/g, "\\'")}', '${d.uuid || ''}')">
-          <div>
-            <div class="device-name">${d.name || 'Okänd'}</div>
-            <div class="device-meta">${d.ip} · ${d.model || 'Sonos'}</div>
+      list.innerHTML = devices.map(d => {
+        const isActive = (currentUuid && d.uuid === currentUuid) || (!currentUuid && d.ip === currentIp);
+        return `
+          <div class="device-card ${isActive ? 'active' : ''}" onclick="selectDevice('${d.ip}', '${(d.name || '').replace(/'/g, "\\'")}', '${d.uuid || ''}')">
+            <div>
+              <div class="device-name">${d.name || 'Okänd'}</div>
+              <div class="device-meta">${d.ip} · ${d.model || 'Sonos'}${d.uuid ? ' · ' + d.uuid.substring(0, 8) : ''}</div>
+            </div>
+            ${isActive ? '<span class="device-badge">AKTIV</span>' : ''}
           </div>
-          ${d.ip === currentIp ? '<span class="device-badge">AKTIV</span>' : ''}
-        </div>
-      `).join('');
+        `;
+      }).join('');
     }
     
     async function selectDevice(ip, name, uuid) {
-      if (ip === currentIp) return;
+      if (uuid && uuid === currentUuid) return;
+      if (!uuid && ip === currentIp) return;
       try {
         const res = await fetch('/api/sonos/config', {
           method: 'PUT',
@@ -168,21 +180,24 @@
         const data = await res.json();
         if (data.ok) {
           currentIp = ip;
+          currentUuid = uuid || null;
           document.getElementById('statusBar').textContent = `Bytte till: ${name || ip}`;
-          // Re-render active state
-          document.querySelectorAll('.device-card').forEach(card => {
-            const cardIp = card.querySelector('.device-meta')?.textContent?.split(' · ')[0];
-            card.classList.toggle('active', cardIp === ip);
+          // Re-render
+          const cards = document.querySelectorAll('.device-card');
+          cards.forEach(card => {
+            const meta = card.querySelector('.device-meta')?.textContent || '';
+            const cardIp = meta.split(' · ')[0];
+            const isActive = (uuid && meta.includes(uuid.substring(0, 8))) || (!uuid && cardIp === ip);
+            card.classList.toggle('active', isActive);
             const badge = card.querySelector('.device-badge');
-            if (badge && cardIp !== ip) badge.remove();
-            if (!badge && cardIp === ip) {
+            if (badge && !isActive) badge.remove();
+            if (!badge && isActive) {
               const span = document.createElement('span');
               span.className = 'device-badge';
               span.textContent = 'AKTIV';
               card.appendChild(span);
             }
           });
-          // Reconnect SSE
           connectSSE();
         }
       } catch (e) {
