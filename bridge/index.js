@@ -657,7 +657,7 @@ function switchSonosIP(newIp, name, uuid) {
   
   // Update
   SONOS_IP = newIp;
-  sonosConfig = { sonosIp: newIp, sonosName: name || null, sonosUuid: uuid || null };
+  sonosConfig = { ...sonosConfig, sonosIp: newIp, sonosName: name || null, sonosUuid: uuid || null };
   saveSonosConfig(sonosConfig);
   
   // Re-subscribe
