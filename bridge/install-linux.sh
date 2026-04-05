@@ -147,10 +147,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$BRIDGE_DIR
-ExecStart=$(which node) index.js
+ExecStart=$(which node) --max-old-space-size=128 index.js
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
+Environment=UV_THREADPOOL_SIZE=2
+MemoryMax=200M
+CPUQuota=80%
+IOWeight=50
+Nice=10
 
 [Install]
 WantedBy=default.target
