@@ -270,7 +270,7 @@ echo "$LOG_TAG Service restarted successfully"
 UPDATESCRIPT
 chmod +x "$BRIDGE_DIR/update.sh"
 
-# Auto-update service + timer (kör kl 04:00 varje natt)
+# Auto-update service + timer (var 5:e minut)
 cat > "$HOME/.config/systemd/user/$SERVICE_NAME-update.service" << EOF
 [Unit]
 Description=Sonos Proxy Auto-Update
@@ -284,11 +284,11 @@ EOF
 
 cat > "$HOME/.config/systemd/user/$SERVICE_NAME-update.timer" << EOF
 [Unit]
-Description=Nightly auto-update for Sonos Proxy
+Description=Auto-update for Sonos Proxy (every 5 min)
 
 [Timer]
-OnCalendar=*-*-* 04:00:00
-RandomizedDelaySec=900
+OnBootSec=2min
+OnUnitActiveSec=5min
 Persistent=true
 
 [Install]
