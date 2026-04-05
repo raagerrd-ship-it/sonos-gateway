@@ -64,11 +64,36 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
-# 1. Kontrollera Node.js & Git
-echo "[1/6] Kontrollerar beroenden..."
+# 1. Kontrollera system, Node.js & Git
+echo "[1/6] Kontrollerar system och beroenden..."
+
+# Kontrollera RAM och swap (Pi Zero 2 W har bara 512MB)
+TOTAL_RAM=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+TOTAL_SWAP=$(free -m 2>/dev/null | awk '/^Swap:/{print $2}')
+if [ -n "$TOTAL_RAM" ]; then
+    echo "  RAM: ${TOTAL_RAM}MB, Swap: ${TOTAL_SWAP:-0}MB"
+    if [ "$TOTAL_RAM" -lt 600 ] && [ "${TOTAL_SWAP:-0}" -lt 100 ]; then
+        echo ""
+        echo "  ⚠️  Lite RAM och ingen swap upptäckt!"
+        echo "  Rekommendation: Lägg till swap för stabilitet:"
+        echo "    sudo fallocate -l 256M /swapfile"
+        echo "    sudo chmod 600 /swapfile"
+        echo "    sudo mkswap /swapfile"
+        echo "    sudo swapon /swapfile"
+        echo "    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab"
+        echo ""
+        read -p "  Fortsätt ändå? (j/n): " CONTINUE_NO_SWAP
+        if [ "$CONTINUE_NO_SWAP" = "n" ] || [ "$CONTINUE_NO_SWAP" = "N" ]; then
+            echo "  Lägg till swap och kör scriptet igen."
+            exit 0
+        fi
+    fi
+fi
+
 if ! command -v node &> /dev/null; then
     echo "  Node.js hittades inte. Försöker installera..."
     if command -v apt-get &> /dev/null; then
+        # Använd NodeSource LTS för ARM-stöd (Pi Zero 2 W = armv7l/aarch64)
         curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
         sudo apt-get install -y nodejs
     else
@@ -76,7 +101,8 @@ if ! command -v node &> /dev/null; then
         exit 1
     fi
 fi
-echo "  ✓ Node.js $(node --version)"
+NODE_VERSION=$(node --version)
+echo "  ✓ Node.js $NODE_VERSION ($(uname -m))"
 
 if ! command -v git &> /dev/null; then
     echo "  Git hittades inte. Försöker installera..."
@@ -147,10 +173,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$BRIDGE_DIR
-ExecStart=$(which node) index.js
+ExecStart=$(which node) --max-old-space-size=128 index.js
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
+Environment=UV_THREADPOOL_SIZE=2
+MemoryMax=200M
+CPUQuota=80%
+IOWeight=50
+Nice=10
 
 [Install]
 WantedBy=default.target

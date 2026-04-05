@@ -43,7 +43,7 @@ let SONOS_IP = sonosConfig.sonosIp;
 
 // ============ Logging ============
 
-const LOG_BUFFER_SIZE = 100;
+const LOG_BUFFER_SIZE = 50;
 let logBuffer = [];
 
 function addToLogBuffer(level, msg, args) {
@@ -613,7 +613,7 @@ function startPositionBroadcast() {
         crossfade: cachedCrossfade
       });
     } catch { /* ignore */ }
-  }, 250);
+  }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
 
 function stopPositionBroadcast() {
