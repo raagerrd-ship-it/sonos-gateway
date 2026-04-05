@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'bridge/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -12,10 +13,22 @@ jobs:
     steps:
       - name: Trigger update on Raspberry Pi
         run: |
-          curl -sf -X POST \
+          echo "🚀 Triggering update on Sonos Gateway..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.SONOS_UPDATE_SECRET }}" \
             -H "Content-Type: application/json" \
             "${{ secrets.SONOS_PROXY_URL }}/api/update" \
             --connect-timeout 10 \
             --max-time 30 \
-            || echo "⚠️ Pi not reachable — will update via nightly cron"
+            2>/dev/null) || HTTP_CODE="000"
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Update triggered successfully"
+            cat /tmp/response.txt
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "⚠️ Pi not reachable — will update via nightly cron (04:00)"
+          else
+            echo "❌ Unexpected response: HTTP $HTTP_CODE"
+            cat /tmp/response.txt
+            exit 1
+          fi
