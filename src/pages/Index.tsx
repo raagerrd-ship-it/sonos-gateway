@@ -184,21 +184,25 @@ const Index = () => {
             <span className="ml-auto text-[10px] font-medium uppercase tracking-wider bg-primary/15 text-primary px-2 py-0.5 rounded-full">Automatisk</span>
           </div>
           <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-            Tre kommandon — scriptet sköter resten: installerar Node.js, dependencies, systemd-tjänst och auto-update var 5:e minut.
+            SSH:a in till din Pi från en annan dator och kör dessa kommandon. Scriptet sköter resten.
           </p>
           <div className="space-y-3">
             <div>
-              <span className="text-xs text-muted-foreground mb-1 block">1. Klona repot</span>
+              <span className="text-xs text-muted-foreground mb-1 block">1. Anslut till din Pi via SSH</span>
+              <CopyBlock text="ssh pi@<pi-ip>" />
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground mb-1 block">2. Klona repot</span>
               <CopyBlock text="git clone https://github.com/raagerrd-ship-it/sonos-gateway.git" />
             </div>
             <div>
-              <span className="text-xs text-muted-foreground mb-1 block">2. Kör installationen</span>
+              <span className="text-xs text-muted-foreground mb-1 block">3. Kör installationen</span>
               <CopyBlock text="cd sonos-gateway && bash bridge/install-linux.sh" />
             </div>
             <div>
-              <span className="text-xs text-muted-foreground mb-1 block">3. Välj högtalare</span>
+              <span className="text-xs text-muted-foreground mb-1 block">4. Välj högtalare</span>
               <p className="text-sm text-muted-foreground">
-                Öppna <code className="bg-secondary px-1.5 py-0.5 rounded text-xs text-foreground/80">http://&lt;pi-ip&gt;:3002</code> i webbläsaren och välj din Sonos-högtalare. Klart!
+                Öppna <code className="bg-secondary px-1.5 py-0.5 rounded text-xs text-foreground/80">http://&lt;pi-ip&gt;:3002</code> i webbläsaren på din dator och välj din Sonos-högtalare. Klart!
               </p>
             </div>
           </div>
