@@ -184,8 +184,48 @@ const Index = () => {
             <span className="ml-auto text-[10px] font-medium uppercase tracking-wider bg-primary/15 text-primary px-2 py-0.5 rounded-full">Automatisk</span>
           </div>
           <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-            SSH:a in till din Pi från en annan dator och kör dessa kommandon. Scriptet sköter resten.
+            Du behöver en annan dator (Mac, PC eller Linux) för att ansluta till din Pi via SSH.
           </p>
+
+          {/* SSH help */}
+          <details className="bg-accent/30 border border-border rounded-lg mb-5">
+            <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none text-sm">
+              <Terminal className="w-4 h-4 text-primary" />
+              <span className="font-medium text-foreground/90">Hur aktiverar och använder jag SSH?</span>
+            </summary>
+            <div className="px-4 pb-4 text-xs text-muted-foreground space-y-3">
+              <div>
+                <p className="font-semibold text-accent-foreground mb-1">Aktivera SSH på din Pi</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>
+                    <strong>Raspberry Pi Imager</strong> – när du flashar SD-kortet, klicka på kugghjulet (⚙) och bocka i "Enable SSH". Enklast!
+                  </li>
+                  <li>
+                    <strong>Redan flashat?</strong> – Sätt in SD-kortet i din dator och skapa en tom fil som heter <code className="bg-secondary px-1 rounded">ssh</code> (utan filändelse) i <code className="bg-secondary px-1 rounded">boot</code>-partitionen. Ta ut kortet och starta Pi:n.
+                  </li>
+                  <li>
+                    <strong>Med skärm & tangentbord</strong> – Kör <code className="bg-secondary px-1 rounded">sudo raspi-config</code> → Interface Options → SSH → Enable.
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="font-semibold text-accent-foreground mb-1">Hitta din Pi:s IP-adress</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Logga in på din router och leta efter en enhet som heter <code className="bg-secondary px-1 rounded">raspberrypi</code>.</li>
+                  <li>Eller prova: <code className="bg-secondary px-1 rounded">ping raspberrypi.local</code> från din dator (fungerar ofta på Mac/Linux).</li>
+                </ul>
+              </div>
+              <div>
+                <p className="font-semibold text-accent-foreground mb-1">Anslut</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li><strong>Mac / Linux</strong> – Öppna Terminal och kör kommandot nedan.</li>
+                  <li><strong>Windows</strong> – Öppna PowerShell eller installera <a href="https://putty.org" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">PuTTY</a>.</li>
+                  <li>Standard-lösenord: <code className="bg-secondary px-1 rounded">raspberry</code> (byt det efteråt med <code className="bg-secondary px-1 rounded">passwd</code>).</li>
+                </ul>
+              </div>
+            </div>
+          </details>
+
           <div className="space-y-3">
             <div>
               <span className="text-xs text-muted-foreground mb-1 block">1. Anslut till din Pi via SSH</span>
