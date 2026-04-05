@@ -43,7 +43,7 @@ let SONOS_IP = sonosConfig.sonosIp;
 
 // ============ Logging ============
 
-const LOG_BUFFER_SIZE = 100;
+const LOG_BUFFER_SIZE = 50;
 let logBuffer = [];
 
 function addToLogBuffer(level, msg, args) {
