@@ -176,61 +176,66 @@ const Index = () => {
           Kör manuellt eller använd det automatiska installationsskriptet för Raspberry Pi.
         </p>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* Manual */}
-          <div className="bg-card border border-border rounded-xl p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Terminal className="w-5 h-5 text-primary" />
-              <h3 className="font-semibold">Manuellt</h3>
+        {/* Pi auto-install (primary) */}
+        <div className="bg-card border-2 border-primary/30 rounded-xl p-6 mb-6">
+          <div className="flex items-center gap-2 mb-1">
+            <Cpu className="w-5 h-5 text-primary" />
+            <h3 className="font-semibold">Raspberry Pi (rekommenderat)</h3>
+            <span className="ml-auto text-[10px] font-medium uppercase tracking-wider bg-primary/15 text-primary px-2 py-0.5 rounded-full">Automatisk</span>
+          </div>
+          <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
+            Tre kommandon — scriptet sköter resten: installerar Node.js, dependencies, systemd-tjänst och auto-update var 5:e minut.
+          </p>
+          <div className="space-y-3">
+            <div>
+              <span className="text-xs text-muted-foreground mb-1 block">1. Klona repot</span>
+              <CopyBlock text="git clone https://github.com/raagerrd-ship-it/sonos-gateway.git" />
             </div>
-            <div className="space-y-2">
-              {installSteps.map((s) => (
-                <div key={s.step}>
-                  <span className="text-xs text-muted-foreground mb-1 block">
-                    {s.step}. {s.title}
-                  </span>
-                  <CopyBlock text={s.cmd} />
-                </div>
-              ))}
+            <div>
+              <span className="text-xs text-muted-foreground mb-1 block">2. Kör installationen</span>
+              <CopyBlock text="cd sonos-gateway && bash bridge/install-linux.sh" />
             </div>
+            <div>
+              <span className="text-xs text-muted-foreground mb-1 block">3. Välj högtalare</span>
+              <p className="text-sm text-muted-foreground">
+                Öppna <code className="bg-secondary px-1.5 py-0.5 rounded text-xs text-foreground/80">http://&lt;pi-ip&gt;:3002</code> i webbläsaren och välj din Sonos-högtalare. Klart!
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 bg-accent/40 border border-primary/10 rounded-lg p-4 text-xs text-muted-foreground space-y-1">
+            <p className="font-semibold text-accent-foreground">Vad scriptet gör:</p>
+            <ul className="list-disc list-inside space-y-0.5">
+              <li>Installerar Node.js och Git om de saknas</li>
+              <li>Klonar repot till <code className="bg-secondary px-1 rounded">~/.local/share/sonos-proxy/</code></li>
+              <li>Skapar systemd-tjänst med resursbegränsningar (200 MB max)</li>
+              <li>Auto-update timer (var 5 min) + nattlig omstart 05:00</li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Manual (secondary) */}
+        <details className="bg-card border border-border rounded-xl">
+          <summary className="flex items-center gap-2 p-6 cursor-pointer select-none">
+            <Terminal className="w-5 h-5 text-muted-foreground" />
+            <span className="font-semibold text-muted-foreground">Manuell installation</span>
+            <span className="text-xs text-muted-foreground ml-auto">för utveckling / andra plattformar</span>
+          </summary>
+          <div className="px-6 pb-6 space-y-2">
+            {installSteps.map((s) => (
+              <div key={s.step}>
+                <span className="text-xs text-muted-foreground mb-1 block">
+                  {s.step}. {s.title}
+                </span>
+                <CopyBlock text={s.cmd} />
+              </div>
+            ))}
             <p className="text-xs text-muted-foreground mt-4">
               Öppna sedan{" "}
               <code className="bg-secondary px-1 rounded">http://localhost:3002</code> och
               välj din Sonos-högtalare.
             </p>
           </div>
-
-          {/* Pi auto-install */}
-          <div className="bg-card border border-border rounded-xl p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Cpu className="w-5 h-5 text-primary" />
-              <h3 className="font-semibold">Raspberry Pi (systemd)</h3>
-            </div>
-            <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-              Scriptet installerar allt automatiskt: Node.js, dependencies, systemd-tjänster
-              och auto-update var 5:e minut.
-            </p>
-            <div className="space-y-2">
-              <div>
-                <span className="text-xs text-muted-foreground mb-1 block">1. Klona repot</span>
-                <CopyBlock text="git clone https://github.com/raagerrd-ship-it/sonos-gateway.git" />
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground mb-1 block">2. Kör installationen</span>
-                <CopyBlock text="cd sonos-gateway && bash bridge/install-linux.sh" />
-              </div>
-            </div>
-            <div className="mt-5 bg-accent/40 border border-primary/10 rounded-lg p-4 text-xs text-muted-foreground space-y-1">
-              <p className="font-semibold text-accent-foreground">Vad händer:</p>
-              <ul className="list-disc list-inside space-y-0.5">
-                <li>Kontrollerar Node.js och Git</li>
-                <li>Klonar repot till <code className="bg-secondary px-1 rounded">~/.local/share/sonos-proxy/</code></li>
-                <li>Skapar systemd-tjänst med resurs­begränsningar</li>
-                <li>Auto-update timer (var 5 min) + nattlig omstart 05:00</li>
-              </ul>
-            </div>
-          </div>
-        </div>
+        </details>
       </section>
 
       {/* Service commands */}
