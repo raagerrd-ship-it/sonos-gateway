@@ -731,9 +731,13 @@ const server = http.createServer(async (req, res) => {
         try {
           const devices = await discoverSonos(5000);
           log.info(`🔍 [SSDP] Found ${devices.length} Sonos device(s)`);
-          sendJson(res, { ok: true, devices, currentIp: SONOS_IP });
+          // Persist discovered devices
+          sonosConfig.knownDevices = devices;
+          saveSonosConfig(sonosConfig);
+          sendJson(res, { ok: true, devices, currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP });
         } catch (err) {
-          sendJson(res, { ok: false, error: err.message }, 500);
+          // Return cached devices on error
+          sendJson(res, { ok: true, devices: sonosConfig.knownDevices || [], currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP, cached: true });
         }
         return;
       }
