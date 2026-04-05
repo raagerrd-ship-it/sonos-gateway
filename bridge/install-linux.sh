@@ -15,8 +15,24 @@ echo "  Sonos Proxy Installer"
 echo "========================================"
 echo ""
 
-read -p "Port (standard: $DEFAULT_PORT): " PORT_INPUT
-PORT=${PORT_INPUT:-$DEFAULT_PORT}
+while true; do
+    read -p "Port (standard: $DEFAULT_PORT): " PORT_INPUT
+    PORT=${PORT_INPUT:-$DEFAULT_PORT}
+    
+    # Kolla om porten redan används (ignorera vår egen tjänst)
+    if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
+        OWNER=$(ss -tlnp 2>/dev/null | grep ":${PORT} " | sed 's/.*users:(("//' | sed 's/".*//')
+        echo "  ⚠️  Port $PORT är redan upptagen av: $OWNER"
+        read -p "  Vill du välja en annan port? (j/n): " RETRY
+        if [ "$RETRY" = "n" ] || [ "$RETRY" = "N" ]; then
+            echo "  Fortsätter med port $PORT (kan orsaka konflikt)"
+            break
+        fi
+    else
+        echo "  ✓ Port $PORT är ledig"
+        break
+    fi
+done
 
 # Om vi kör från en git-klonad mapp, använd den som repo-URL
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
