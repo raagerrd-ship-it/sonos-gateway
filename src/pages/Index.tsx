@@ -57,8 +57,8 @@ const apiEndpoints = [
 ];
 
 const installSteps = [
-  { step: "1", title: "Klona repot", cmd: "git clone https://github.com/raagerrd-ship-it/sonos-gateway.git && cd sonos-gateway" },
-  { step: "2", title: "Installera", cmd: "cd bridge && npm install" },
+  { step: "1", title: "Klona repot", cmd: "git clone https://github.com/raagerrd-ship-it/sonos-gateway.git && cd sonos-gateway/bridge" },
+  { step: "2", title: "Installera", cmd: "npm install" },
   { step: "3", title: "Konfigurera", cmd: "cp .env.example .env" },
   { step: "4", title: "Starta", cmd: "node index.js" },
 ];
