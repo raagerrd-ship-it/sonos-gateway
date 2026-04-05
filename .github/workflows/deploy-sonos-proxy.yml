@@ -1,0 +1,21 @@
+name: Deploy Sonos Proxy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bridge/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger update on Raspberry Pi
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.SONOS_UPDATE_SECRET }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.SONOS_PROXY_URL }}/api/update" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            || echo "⚠️ Pi not reachable — will update via nightly cron"

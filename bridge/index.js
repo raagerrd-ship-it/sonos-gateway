@@ -941,6 +941,30 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
+      // POST /api/update — webhook-triggered git pull + restart
+      if (req.method === 'POST' && pathname === '/api/update') {
+        const token = process.env.UPDATE_SECRET || '';
+        const authHeader = req.headers['authorization'] || '';
+        if (!token || authHeader !== `Bearer ${token}`) {
+          sendJson(res, { error: 'Unauthorized' }, 401);
+          return;
+        }
+        log.info('🔄 [UPDATE] Webhook triggered, running update...');
+        sendJson(res, { ok: true, message: 'Update started' });
+        // Run update.sh asynchronously
+        const { exec } = require('child_process');
+        const updateScript = path.join(__dirname, 'update.sh');
+        exec(`bash "${updateScript}"`, { timeout: 120000 }, (err, stdout, stderr) => {
+          if (err) {
+            log.error(`❌ [UPDATE] Failed: ${err.message}`);
+            if (stderr) log.error(`❌ [UPDATE] stderr: ${stderr}`);
+          } else {
+            log.info(`✅ [UPDATE] Success: ${stdout.trim().split('\n').pop()}`);
+          }
+        });
+        return;
+      }
+      
       sendJson(res, { error: 'Not Found' }, 404);
     } catch (error) {
       log.error('API error:', error.message);
