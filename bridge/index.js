@@ -959,7 +959,31 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   log.info(`🔊 Sonos Proxy v${VERSION} starting...`);
-  log.info(`🔊 Sonos IP: ${SONOS_IP} (${sonosConfig.sonosName || 'unnamed'})`);
+  log.info(`🔊 Configured: ${sonosConfig.sonosName || 'unnamed'} (UUID: ${sonosConfig.sonosUuid || 'none'}, IP: ${SONOS_IP})`);
+  
+  // Auto-scan to resolve UUID → current IP (handles DHCP changes)
+  if (sonosConfig.sonosUuid) {
+    log.info(`🔍 [SSDP] Auto-scanning to verify UUID ${sonosConfig.sonosUuid}...`);
+    try {
+      const devices = await discoverSonos(5000);
+      sonosConfig.knownDevices = devices;
+      saveSonosConfig(sonosConfig);
+      const match = devices.find(d => d.uuid === sonosConfig.sonosUuid);
+      if (match && match.ip !== SONOS_IP) {
+        log.info(`🔄 [SSDP] IP changed: ${SONOS_IP} → ${match.ip} for "${match.name}"`);
+        SONOS_IP = match.ip;
+        sonosConfig.sonosIp = match.ip;
+        sonosConfig.sonosName = match.name || sonosConfig.sonosName;
+        saveSonosConfig(sonosConfig);
+      } else if (match) {
+        log.info(`✅ [SSDP] UUID confirmed at ${match.ip}`);
+      } else {
+        log.warn(`⚠️ [SSDP] UUID ${sonosConfig.sonosUuid} not found on network, using saved IP ${SONOS_IP}`);
+      }
+    } catch (err) {
+      log.warn(`⚠️ [SSDP] Auto-scan failed: ${err.message}, using saved IP ${SONOS_IP}`);
+    }
+  }
   
   server.on('error', (err) => log.error(`❌ HTTP server error: ${err.message}`));
   
