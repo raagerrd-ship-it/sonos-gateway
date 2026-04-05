@@ -613,7 +613,7 @@ function startPositionBroadcast() {
         crossfade: cachedCrossfade
       });
     } catch { /* ignore */ }
-  }, 250);
+  }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
 
 function stopPositionBroadcast() {
