@@ -23,7 +23,8 @@ function loadSonosConfig() {
   return {
     sonosIp: process.env.SONOS_IP || '192.168.1.175',
     sonosName: null,
-    sonosUuid: null
+    sonosUuid: null,
+    knownDevices: []
   };
 }
 
@@ -656,7 +657,7 @@ function switchSonosIP(newIp, name, uuid) {
   
   // Update
   SONOS_IP = newIp;
-  sonosConfig = { sonosIp: newIp, sonosName: name || null, sonosUuid: uuid || null };
+  sonosConfig = { ...sonosConfig, sonosIp: newIp, sonosName: name || null, sonosUuid: uuid || null };
   saveSonosConfig(sonosConfig);
   
   // Re-subscribe
@@ -730,16 +731,20 @@ const server = http.createServer(async (req, res) => {
         try {
           const devices = await discoverSonos(5000);
           log.info(`🔍 [SSDP] Found ${devices.length} Sonos device(s)`);
-          sendJson(res, { ok: true, devices, currentIp: SONOS_IP });
+          // Persist discovered devices
+          sonosConfig.knownDevices = devices;
+          saveSonosConfig(sonosConfig);
+          sendJson(res, { ok: true, devices, currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP });
         } catch (err) {
-          sendJson(res, { ok: false, error: err.message }, 500);
+          // Return cached devices on error
+          sendJson(res, { ok: true, devices: sonosConfig.knownDevices || [], currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP, cached: true });
         }
         return;
       }
       
       // GET /api/sonos/config
       if (req.method === 'GET' && pathname === '/api/sonos/config') {
-        sendJson(res, { ok: true, ...sonosConfig, currentIp: SONOS_IP });
+        sendJson(res, { ok: true, ...sonosConfig, currentIp: SONOS_IP, knownDevices: sonosConfig.knownDevices || [] });
         return;
       }
       
@@ -954,7 +959,31 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   log.info(`🔊 Sonos Proxy v${VERSION} starting...`);
-  log.info(`🔊 Sonos IP: ${SONOS_IP} (${sonosConfig.sonosName || 'unnamed'})`);
+  log.info(`🔊 Configured: ${sonosConfig.sonosName || 'unnamed'} (UUID: ${sonosConfig.sonosUuid || 'none'}, IP: ${SONOS_IP})`);
+  
+  // Auto-scan to resolve UUID → current IP (handles DHCP changes)
+  if (sonosConfig.sonosUuid) {
+    log.info(`🔍 [SSDP] Auto-scanning to verify UUID ${sonosConfig.sonosUuid}...`);
+    try {
+      const devices = await discoverSonos(5000);
+      sonosConfig.knownDevices = devices;
+      saveSonosConfig(sonosConfig);
+      const match = devices.find(d => d.uuid === sonosConfig.sonosUuid);
+      if (match && match.ip !== SONOS_IP) {
+        log.info(`🔄 [SSDP] IP changed: ${SONOS_IP} → ${match.ip} for "${match.name}"`);
+        SONOS_IP = match.ip;
+        sonosConfig.sonosIp = match.ip;
+        sonosConfig.sonosName = match.name || sonosConfig.sonosName;
+        saveSonosConfig(sonosConfig);
+      } else if (match) {
+        log.info(`✅ [SSDP] UUID confirmed at ${match.ip}`);
+      } else {
+        log.warn(`⚠️ [SSDP] UUID ${sonosConfig.sonosUuid} not found on network, using saved IP ${SONOS_IP}`);
+      }
+    } catch (err) {
+      log.warn(`⚠️ [SSDP] Auto-scan failed: ${err.message}, using saved IP ${SONOS_IP}`);
+    }
+  }
   
   server.on('error', (err) => log.error(`❌ HTTP server error: ${err.message}`));
   
