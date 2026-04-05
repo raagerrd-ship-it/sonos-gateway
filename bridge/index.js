@@ -11,7 +11,7 @@ const VERSION = '1.0.0';
 // Configuration
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const PORT = parseInt(process.env.PORT || '3000');
+const PORT = parseInt(process.env.PORT || '3002');
 
 // Load persisted config or fall back to env
 function loadSonosConfig() {

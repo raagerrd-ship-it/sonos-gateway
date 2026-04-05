@@ -5,7 +5,7 @@ set -e
 
 APP_NAME="sonos-proxy"
 SERVICE_NAME="sonos-proxy"
-DEFAULT_PORT=3000
+DEFAULT_PORT=3002
 REPO_DIR="$HOME/.local/share/$APP_NAME"
 BRIDGE_DIR="$REPO_DIR/bridge"
 

@@ -6,7 +6,7 @@ Fristående Sonos UPnP-proxy med SSDP-nätverksskanning, SSE-streaming och webb-
 
 ```
 ┌─────────────────────────────────────────┐
-│  Sonos Proxy  :3000                     │
+│  Sonos Proxy  :3002                     │
 │                                         │
 │  SSDP scan ──► lista alla Sonos-enheter │
 │  Vald IP   ──► UPnP SUBSCRIBE          │
