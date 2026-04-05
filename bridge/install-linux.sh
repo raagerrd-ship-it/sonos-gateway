@@ -150,14 +150,43 @@ npm install --production
 
 # Skapa .env om den inte finns
 if [ ! -f "$BRIDGE_DIR/.env" ]; then
+    echo ""
+    echo "  Webhook-uppdatering (GitHub Actions → Pi):"
+    echo "  Generera en hemlig nyckel för att säkra webhook-anropet."
+    echo "  Samma nyckel ska läggas som SONOS_UPDATE_SECRET i GitHub repo secrets."
+    echo ""
+    
+    # Generera ett förslag
+    SUGGESTED_SECRET=$(openssl rand -hex 24 2>/dev/null || head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 48)
+    read -p "  UPDATE_SECRET [$SUGGESTED_SECRET]: " USER_SECRET
+    UPDATE_SECRET=${USER_SECRET:-$SUGGESTED_SECRET}
+    
     cat > "$BRIDGE_DIR/.env" << EOF
 # Sonos Proxy Configuration
 PORT=$PORT
 SONOS_IP=192.168.1.175
+
+# Webhook update secret (same value as GitHub Actions secret SONOS_UPDATE_SECRET)
+UPDATE_SECRET=$UPDATE_SECRET
 EOF
     echo "  ✓ Skapade .env med port $PORT"
+    echo ""
+    echo "  ╔══════════════════════════════════════════════════════════════╗"
+    echo "  ║  VIKTIGT: Lägg till dessa GitHub repo secrets:             ║"
+    echo "  ║                                                            ║"
+    echo "  ║  SONOS_UPDATE_SECRET = $UPDATE_SECRET"
+    echo "  ║  SONOS_PROXY_URL     = http://$(hostname -I | awk '{print $1}'):$PORT"
+    echo "  ║                                                            ║"
+    echo "  ║  GitHub → Settings → Secrets and variables → Actions       ║"
+    echo "  ╚══════════════════════════════════════════════════════════════╝"
+    echo ""
 else
     echo "  ✓ Behöll befintlig .env"
+    # Visa påminnelse om secrets om UPDATE_SECRET saknas
+    if ! grep -q "UPDATE_SECRET=.\+" "$BRIDGE_DIR/.env" 2>/dev/null; then
+        echo "  ⚠️  UPDATE_SECRET saknas i .env — webhook-uppdatering fungerar inte"
+        echo "  Kör: echo 'UPDATE_SECRET=<din-nyckel>' >> $BRIDGE_DIR/.env"
+    fi
 fi
 
 # 5. Systemd services
