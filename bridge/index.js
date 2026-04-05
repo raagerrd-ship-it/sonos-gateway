@@ -744,7 +744,7 @@ const server = http.createServer(async (req, res) => {
       
       // GET /api/sonos/config
       if (req.method === 'GET' && pathname === '/api/sonos/config') {
-        sendJson(res, { ok: true, ...sonosConfig, currentIp: SONOS_IP });
+        sendJson(res, { ok: true, ...sonosConfig, currentIp: SONOS_IP, knownDevices: sonosConfig.knownDevices || [] });
         return;
       }
       
