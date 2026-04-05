@@ -207,12 +207,18 @@ const Index = () => {
               <h3 className="font-semibold">Raspberry Pi (systemd)</h3>
             </div>
             <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-              Installationsskriptet klonar repot, installerar dependencies, skapar systemd-tjänster
-              och aktiverar automatisk uppdatering var 5:e minut.
+              Scriptet installerar allt automatiskt: Node.js, dependencies, systemd-tjänster
+              och auto-update var 5:e minut.
             </p>
             <div className="space-y-2">
-              <CopyBlock text="chmod +x bridge/install-linux.sh" />
-              <CopyBlock text="./bridge/install-linux.sh" />
+              <div>
+                <span className="text-xs text-muted-foreground mb-1 block">1. Klona repot</span>
+                <CopyBlock text="git clone https://github.com/raagerrd-ship-it/sonos-gateway.git" />
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground mb-1 block">2. Kör installationen</span>
+                <CopyBlock text="cd sonos-gateway && bash bridge/install-linux.sh" />
+              </div>
             </div>
             <div className="mt-5 bg-accent/40 border border-primary/10 rounded-lg p-4 text-xs text-muted-foreground space-y-1">
               <p className="font-semibold text-accent-foreground">Vad händer:</p>
