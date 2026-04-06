@@ -194,7 +194,7 @@ Environment=NODE_ENV=production
 Environment=UV_THREADPOOL_SIZE=2
 Environment=POSITION_INTERVAL_MS=500
 MemoryMax=200M
-AllowedCPUs=3
+AllowedCPUs=$CPU_CORE
 CPUQuota=100%
 IOWeight=50
 Nice=-5
