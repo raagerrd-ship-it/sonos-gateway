@@ -178,10 +178,12 @@ Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
 Environment=UV_THREADPOOL_SIZE=2
+Environment=POSITION_INTERVAL_MS=500
 MemoryMax=200M
-CPUQuota=80%
+AllowedCPUs=3
+CPUQuota=100%
 IOWeight=50
-Nice=10
+Nice=-5
 
 [Install]
 WantedBy=default.target
