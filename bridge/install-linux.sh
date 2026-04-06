@@ -36,6 +36,18 @@ while true; do
     fi
 done
 
+# CPU-kärna
+echo ""
+echo "  Tillgängliga CPU-kärnor: 0-$((TOTAL_CPUS - 1)) ($TOTAL_CPUS st)"
+read -p "Dedikerad CPU-kärna (standard: $DEFAULT_CPU): " CPU_INPUT
+CPU_CORE=${CPU_INPUT:-$DEFAULT_CPU}
+if [ "$CPU_CORE" -ge 0 ] 2>/dev/null && [ "$CPU_CORE" -lt "$TOTAL_CPUS" ]; then
+    echo "  ✓ Använder CPU-kärna $CPU_CORE"
+else
+    echo "  ⚠️  Ogiltigt val, använder kärna $DEFAULT_CPU"
+    CPU_CORE=$DEFAULT_CPU
+fi
+
 # Om vi kör från en git-klonad mapp, använd den som repo-URL
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
