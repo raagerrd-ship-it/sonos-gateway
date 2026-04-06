@@ -6,6 +6,8 @@ set -e
 APP_NAME="sonos-proxy"
 SERVICE_NAME="sonos-proxy"
 DEFAULT_PORT=3002
+DEFAULT_CPU=3
+TOTAL_CPUS=$(nproc 2>/dev/null || echo 4)
 REPO_DIR="$HOME/.local/share/$APP_NAME"
 BRIDGE_DIR="$REPO_DIR/bridge"
 
