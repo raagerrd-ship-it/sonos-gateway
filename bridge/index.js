@@ -709,7 +709,7 @@ function startPositionBroadcast() {
       if (muteXml) { const v = extractTag(muteXml, 'CurrentMute'); if (v !== null) mute = v === '1'; }
       const relTime = extractTag(posXml, 'RelTime');
       const trackDuration = extractTag(posXml, 'TrackDuration');
-      broadcastSSE({
+      const tickData = {
         ok: true,
         source: 'position-tick',
         positionMillis: parseTime(relTime),
@@ -720,8 +720,17 @@ function startPositionBroadcast() {
         bass: cachedBass,
         treble: cachedTreble,
         loudness: cachedLoudness,
-        crossfade: cachedCrossfade
-      });
+        crossfade: cachedCrossfade,
+        // Include last known track info for cloud push
+        trackName: lastSonosEvent?.trackName || null,
+        artistName: lastSonosEvent?.artistName || null,
+        albumName: lastSonosEvent?.albumName || null,
+        playbackState: lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING',
+        groupId: cachedGroupId,
+        groupName: cachedGroupName,
+      };
+      broadcastSSE(tickData);
+      cloudPush(tickData);
     } catch { /* ignore */ }
   }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
