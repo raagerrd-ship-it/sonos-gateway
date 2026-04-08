@@ -757,6 +757,28 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
+      // POST /api/sonos/update — git pull + signal restart
+      if (req.method === 'POST' && pathname === '/api/sonos/update') {
+        const { execSync } = require('child_process');
+        const repoDir = path.resolve(__dirname, '..');
+        try {
+          const pullResult = execSync('git pull', { cwd: repoDir, timeout: 15000, encoding: 'utf8' });
+          const isUpToDate = pullResult.includes('Already up to date') || pullResult.includes('Already up-to-date');
+          if (isUpToDate) {
+            sendJson(res, { ok: true, updated: false, message: 'Redan uppdaterad' });
+            return;
+          }
+          // Install deps if package.json changed
+          try { execSync('npm install --production', { cwd: path.join(repoDir, 'bridge'), timeout: 30000, encoding: 'utf8' }); } catch (e) {}
+          sendJson(res, { ok: true, updated: true, message: 'Uppdaterad! Startar om...', output: pullResult.trim() });
+          // Restart after response is sent
+          setTimeout(() => { process.exit(0); }, 500);
+        } catch (e) {
+          sendJson(res, { ok: false, error: e.message }, 500);
+        }
+        return;
+      }
+      
       // GET /api/sonos/status
       if (req.method === 'GET' && pathname === '/api/sonos/status') {
         try {
