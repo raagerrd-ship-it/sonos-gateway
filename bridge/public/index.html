@@ -183,21 +183,17 @@
           currentUuid = uuid || null;
           document.getElementById('statusBar').textContent = `Bytte till: ${name || ip}`;
           // Re-render
-          const cards = document.querySelectorAll('.device-card');
-          cards.forEach(card => {
-            const meta = card.querySelector('.device-meta')?.textContent || '';
-            const cardIp = meta.split(' · ')[0];
-            const isActive = (uuid && meta.includes(uuid.substring(0, 8))) || (!uuid && cardIp === ip);
-            card.classList.toggle('active', isActive);
-            const badge = card.querySelector('.device-badge');
-            if (badge && !isActive) badge.remove();
-            if (!badge && isActive) {
-              const span = document.createElement('span');
-              span.className = 'device-badge';
-              span.textContent = 'AKTIV';
-              card.appendChild(span);
+          // Re-fetch and re-render to ensure correct active state
+          try {
+            const cfgRes = await fetch('/api/sonos/config');
+            const cfgData = await cfgRes.json();
+            if (cfgData.ok && cfgData.knownDevices) {
+              renderDevices(cfgData.knownDevices);
             }
-          });
+          } catch (e) {
+            // Fallback: just re-scan
+            scanDevices();
+          }
           connectSSE();
         }
       } catch (e) {
