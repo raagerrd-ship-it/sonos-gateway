@@ -95,7 +95,10 @@
     <!-- Devices -->
     <div class="section-header">
       <span class="section-title">Enheter på nätverket</span>
-      <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="updateBtn" onclick="updateService()">⬆ Uppdatera</button>
+        <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
+      </div>
     </div>
     <div class="device-list" id="deviceList">
       <div class="empty-state">Klicka "Skanna" för att hitta Sonos-enheter</div>
@@ -254,6 +257,38 @@
       `;
     }
     
+    async function updateService() {
+      const btn = document.getElementById('updateBtn');
+      btn.disabled = true;
+      btn.textContent = '⬆ Uppdaterar...';
+      btn.classList.add('btn-scanning');
+      const status = document.getElementById('statusBar');
+      try {
+        const res = await fetch('/api/sonos/update', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok && data.updated) {
+          status.textContent = '✅ Uppdaterad! Startar om tjänsten...';
+          // Service will restart, page will reconnect
+          setTimeout(() => location.reload(), 3000);
+        } else if (data.ok) {
+          status.textContent = '✅ Redan senaste versionen';
+          btn.disabled = false;
+          btn.textContent = '⬆ Uppdatera';
+          btn.classList.remove('btn-scanning');
+        } else {
+          status.textContent = '❌ ' + (data.error || 'Uppdatering misslyckades');
+          btn.disabled = false;
+          btn.textContent = '⬆ Uppdatera';
+          btn.classList.remove('btn-scanning');
+        }
+      } catch (e) {
+        status.textContent = '❌ Kunde inte nå servern';
+        btn.disabled = false;
+        btn.textContent = '⬆ Uppdatera';
+        btn.classList.remove('btn-scanning');
+      }
+    }
+
     // Fetch initial status immediately, then connect SSE for updates
     async function init() {
       await loadConfig();
