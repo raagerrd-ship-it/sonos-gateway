@@ -207,8 +207,16 @@
       eventSource.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
-          updateNowPlaying(data);
+          // Only update if we actually have meaningful data
+          if (data && (data.trackName || data.playbackState)) {
+            updateNowPlaying(data);
+          }
         } catch (err) {}
+      };
+      eventSource.onerror = () => {
+        // Reconnect after 3s on error
+        eventSource.close();
+        setTimeout(connectSSE, 3000);
       };
     }
     
@@ -246,9 +254,19 @@
       `;
     }
     
-    // Init
-    loadConfig();
-    connectSSE();
+    // Fetch initial status immediately, then connect SSE for updates
+    async function init() {
+      await loadConfig();
+      try {
+        const res = await fetch('/api/sonos/status');
+        const data = await res.json();
+        if (data && (data.trackName || data.playbackState)) {
+          updateNowPlaying(data);
+        }
+      } catch (e) {}
+      connectSSE();
+    }
+    init();
   </script>
 </body>
 </html>
