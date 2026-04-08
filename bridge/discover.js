@@ -3,7 +3,7 @@ const dgram = require('dgram');
 const http = require('http');
 
 const SSDP_ADDRESS = '239.255.255.250';
-const SSDP_PORT = 1943;
+const SSDP_PORT = 1900;
 const SONOS_SEARCH_TARGET = 'urn:schemas-upnp-org:device:ZonePlayer:1';
 
 const M_SEARCH = [
