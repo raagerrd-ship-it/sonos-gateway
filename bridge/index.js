@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const os = require('os');
 const { discoverSonos } = require('./discover');
 
