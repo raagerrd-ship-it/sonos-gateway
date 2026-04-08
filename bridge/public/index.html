@@ -95,7 +95,10 @@
     <!-- Devices -->
     <div class="section-header">
       <span class="section-title">Enheter på nätverket</span>
-      <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="updateBtn" onclick="updateService()">⬆ Uppdatera</button>
+        <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
+      </div>
     </div>
     <div class="device-list" id="deviceList">
       <div class="empty-state">Klicka "Skanna" för att hitta Sonos-enheter</div>
