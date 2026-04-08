@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const os = require('os');
 const { discoverSonos } = require('./discover');
 
@@ -294,9 +295,118 @@ function cancelPendingSonosIdle(reason) {
   if (hadPending) log.info(`✅ [SONOS] Suppressed pending IDLE (${reason})`);
 }
 
+// ============ Cloud Push to Brew Monitor TV ============
+
+const CLOUD_PUSH_URL = process.env.CLOUD_PUSH_URL || null;
+const CLOUD_PUSH_SECRET = process.env.CLOUD_PUSH_SECRET || null;
+const CLOUD_PUSH_INTERVAL_MS = parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000');
+let lastCloudPush = 0;
+let cloudPushPending = false;
+let lastCloudPushData = null;
+
+function cloudPush(eventData) {
+  if (!CLOUD_PUSH_URL || !CLOUD_PUSH_SECRET) return;
+
+  // Build payload with raw album art URIs (not local proxy paths)
+  const payload = {
+    trackName: eventData.trackName || null,
+    artistName: eventData.artistName || null,
+    albumName: eventData.albumName || null,
+    albumArtUri: cachedRawAlbumArtUri ? (cachedRawAlbumArtUri.startsWith('/') ? `http://${SONOS_IP}:1400${cachedRawAlbumArtUri}` : cachedRawAlbumArtUri) : null,
+    playbackState: eventData.playbackState || null,
+    positionMillis: eventData.positionMillis ?? null,
+    durationMillis: eventData.durationMillis ?? null,
+    pushedAt: Date.now(),
+    nextTrackName: eventData.nextTrackName || null,
+    nextArtistName: eventData.nextArtistName || null,
+    nextAlbumArtUri: cachedRawNextAlbumArtUri ? (cachedRawNextAlbumArtUri.startsWith('/') ? `http://${SONOS_IP}:1400${cachedRawNextAlbumArtUri}` : cachedRawNextAlbumArtUri) : null,
+    volume: eventData.volume ?? null,
+    mute: eventData.mute ?? null,
+    bass: eventData.bass ?? null,
+    treble: eventData.treble ?? null,
+    loudness: eventData.loudness ?? null,
+    crossfade: eventData.crossfade ?? null,
+    mediaType: eventData.mediaType || null,
+    trackNumber: eventData.trackNumber ?? null,
+    trackURI: eventData.trackURI || null,
+    nrTracks: eventData.nrTracks ?? null,
+    currentURI: eventData.currentURI || null,
+    nextAVTransportURI: eventData.nextAVTransportURI || null,
+    playMedium: eventData.playMedium || null,
+    streamContent: eventData.streamContent || null,
+    radioShowMd: eventData.radioShowMd || null,
+    originalTrackNumber: eventData.originalTrackNumber ?? null,
+    protocolInfo: eventData.protocolInfo || null,
+    groupId: eventData.groupId || null,
+    groupName: eventData.groupName || null,
+  };
+
+  // Throttle: don't push more often than CLOUD_PUSH_INTERVAL_MS
+  const now = Date.now();
+  if (now - lastCloudPush < CLOUD_PUSH_INTERVAL_MS) {
+    lastCloudPushData = payload;
+    if (!cloudPushPending) {
+      cloudPushPending = true;
+      setTimeout(() => {
+        cloudPushPending = false;
+        if (lastCloudPushData) {
+          const p = lastCloudPushData;
+          lastCloudPushData = null;
+          doCloudPush(p);
+        }
+      }, CLOUD_PUSH_INTERVAL_MS - (now - lastCloudPush));
+    }
+    return;
+  }
+  lastCloudPushData = null;
+  doCloudPush(payload);
+}
+
+function doCloudPush(payload) {
+  lastCloudPush = Date.now();
+  const body = JSON.stringify(payload);
+  const url = new URL(CLOUD_PUSH_URL);
+  const isHttps = url.protocol === 'https:';
+  const options = {
+    hostname: url.hostname,
+    port: url.port || (isHttps ? 443 : 80),
+    path: url.pathname + url.search,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-bridge-secret': CLOUD_PUSH_SECRET,
+      'Content-Length': Buffer.byteLength(body),
+    },
+    timeout: 10000,
+  };
+  const lib = isHttps ? https : http;
+  const req = lib.request(options, (res) => {
+    let data = '';
+    res.on('data', c => data += c);
+    res.on('end', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        log.debug(`☁️ [CLOUD] Push OK (${res.statusCode}) ${data.substring(0, 100)}`);
+      } else {
+        log.warn(`☁️ [CLOUD] Push failed (${res.statusCode}): ${data.substring(0, 200)}`);
+      }
+    });
+  });
+  req.on('error', (err) => log.error(`☁️ [CLOUD] Push error: ${err.message}`));
+  req.on('timeout', () => { req.destroy(); log.warn('☁️ [CLOUD] Push timeout'); });
+  req.write(body);
+  req.end();
+}
+
+if (CLOUD_PUSH_URL) {
+  log.info(`☁️ [CLOUD] Push enabled → ${CLOUD_PUSH_URL}`);
+} else {
+  log.info(`☁️ [CLOUD] Push disabled (no CLOUD_PUSH_URL)`);
+}
+
 function emitSonosEvent(eventData) {
   lastSonosEvent = eventData;
   broadcastSSE(eventData);
+  cloudPush(eventData);
 }
 
 function schedulePendingSonosIdle(eventData, meta) {
@@ -599,7 +709,7 @@ function startPositionBroadcast() {
       if (muteXml) { const v = extractTag(muteXml, 'CurrentMute'); if (v !== null) mute = v === '1'; }
       const relTime = extractTag(posXml, 'RelTime');
       const trackDuration = extractTag(posXml, 'TrackDuration');
-      broadcastSSE({
+      const tickData = {
         ok: true,
         source: 'position-tick',
         positionMillis: parseTime(relTime),
@@ -610,8 +720,17 @@ function startPositionBroadcast() {
         bass: cachedBass,
         treble: cachedTreble,
         loudness: cachedLoudness,
-        crossfade: cachedCrossfade
-      });
+        crossfade: cachedCrossfade,
+        // Include last known track info for cloud push
+        trackName: lastSonosEvent?.trackName || null,
+        artistName: lastSonosEvent?.artistName || null,
+        albumName: lastSonosEvent?.albumName || null,
+        playbackState: lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING',
+        groupId: cachedGroupId,
+        groupName: cachedGroupName,
+      };
+      broadcastSSE(tickData);
+      cloudPush(tickData);
     } catch { /* ignore */ }
   }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
