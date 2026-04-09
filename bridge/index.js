@@ -407,15 +407,30 @@ function doCloudPush(payload) {
     let data = '';
     res.on('data', c => data += c);
     res.on('end', () => {
-      if (res.statusCode >= 200 && res.statusCode < 300) {
+      const isOk = res.statusCode >= 200 && res.statusCode < 300;
+      cloudPushStatus = {
+        lastPushAt: new Date().toISOString(),
+        statusCode: res.statusCode,
+        ok: isOk,
+        error: isOk ? null : data.substring(0, 200),
+        responseBody: data.substring(0, 200),
+      };
+      if (isOk) {
         log.debug(`☁️ [CLOUD] Push OK (${res.statusCode}) ${data.substring(0, 100)}`);
       } else {
         log.warn(`☁️ [CLOUD] Push failed (${res.statusCode}): ${data.substring(0, 200)}`);
       }
     });
   });
-  req.on('error', (err) => log.error(`☁️ [CLOUD] Push error: ${err.message}`));
-  req.on('timeout', () => { req.destroy(); log.warn('☁️ [CLOUD] Push timeout'); });
+  req.on('error', (err) => {
+    cloudPushStatus = { lastPushAt: new Date().toISOString(), statusCode: null, ok: false, error: err.message, responseBody: null };
+    log.error(`☁️ [CLOUD] Push error: ${err.message}`);
+  });
+  req.on('timeout', () => {
+    req.destroy();
+    cloudPushStatus = { lastPushAt: new Date().toISOString(), statusCode: null, ok: false, error: 'Timeout', responseBody: null };
+    log.warn('☁️ [CLOUD] Push timeout');
+  });
   req.write(body);
   req.end();
 }
