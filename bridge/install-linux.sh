@@ -5,48 +5,28 @@ set -e
 
 APP_NAME="sonos-proxy"
 SERVICE_NAME="sonos-proxy"
-DEFAULT_PORT=3002
-DEFAULT_CPU=3
+PORT=3002
+CPU_CORE=3
 TOTAL_CPUS=$(nproc 2>/dev/null || echo 4)
 REPO_DIR="$HOME/.local/share/$APP_NAME"
 BRIDGE_DIR="$REPO_DIR/bridge"
+
+# Parse CLI arguments (from Pi Dashboard)
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --port) PORT="$2"; shift 2 ;;
+        --core) CPU_CORE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
 
 echo ""
 echo "========================================"
 echo "  Sonos Proxy Installer"
 echo "========================================"
 echo ""
-
-while true; do
-    read -p "Port (standard: $DEFAULT_PORT): " PORT_INPUT
-    PORT=${PORT_INPUT:-$DEFAULT_PORT}
-    
-    # Kolla om porten redan används (ignorera vår egen tjänst)
-    if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
-        OWNER=$(ss -tlnp 2>/dev/null | grep ":${PORT} " | sed 's/.*users:(("//' | sed 's/".*//')
-        echo "  ⚠️  Port $PORT är redan upptagen av: $OWNER"
-        read -p "  Vill du välja en annan port? (j/n): " RETRY
-        if [ "$RETRY" = "n" ] || [ "$RETRY" = "N" ]; then
-            echo "  Fortsätter med port $PORT (kan orsaka konflikt)"
-            break
-        fi
-    else
-        echo "  ✓ Port $PORT är ledig"
-        break
-    fi
-done
-
-# CPU-kärna
-echo ""
-echo "  Tillgängliga CPU-kärnor: 0-$((TOTAL_CPUS - 1)) ($TOTAL_CPUS st)"
-read -p "Dedikerad CPU-kärna (standard: $DEFAULT_CPU): " CPU_INPUT
-CPU_CORE=${CPU_INPUT:-$DEFAULT_CPU}
-if [ "$CPU_CORE" -ge 0 ] 2>/dev/null && [ "$CPU_CORE" -lt "$TOTAL_CPUS" ]; then
-    echo "  ✓ Använder CPU-kärna $CPU_CORE"
-else
-    echo "  ⚠️  Ogiltigt val, använder kärna $DEFAULT_CPU"
-    CPU_CORE=$DEFAULT_CPU
-fi
+echo "  Port: $PORT"
+echo "  CPU:  Kärna $CPU_CORE (av $TOTAL_CPUS)"
 
 # Om vi kör från en git-klonad mapp, använd den som repo-URL
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
