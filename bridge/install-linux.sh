@@ -5,48 +5,28 @@ set -e
 
 APP_NAME="sonos-proxy"
 SERVICE_NAME="sonos-proxy"
-DEFAULT_PORT=3002
-DEFAULT_CPU=3
+PORT=3002
+CPU_CORE=3
 TOTAL_CPUS=$(nproc 2>/dev/null || echo 4)
 REPO_DIR="$HOME/.local/share/$APP_NAME"
 BRIDGE_DIR="$REPO_DIR/bridge"
+
+# Parse CLI arguments (from Pi Dashboard)
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --port) PORT="$2"; shift 2 ;;
+        --core) CPU_CORE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
 
 echo ""
 echo "========================================"
 echo "  Sonos Proxy Installer"
 echo "========================================"
 echo ""
-
-while true; do
-    read -p "Port (standard: $DEFAULT_PORT): " PORT_INPUT
-    PORT=${PORT_INPUT:-$DEFAULT_PORT}
-    
-    # Kolla om porten redan används (ignorera vår egen tjänst)
-    if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
-        OWNER=$(ss -tlnp 2>/dev/null | grep ":${PORT} " | sed 's/.*users:(("//' | sed 's/".*//')
-        echo "  ⚠️  Port $PORT är redan upptagen av: $OWNER"
-        read -p "  Vill du välja en annan port? (j/n): " RETRY
-        if [ "$RETRY" = "n" ] || [ "$RETRY" = "N" ]; then
-            echo "  Fortsätter med port $PORT (kan orsaka konflikt)"
-            break
-        fi
-    else
-        echo "  ✓ Port $PORT är ledig"
-        break
-    fi
-done
-
-# CPU-kärna
-echo ""
-echo "  Tillgängliga CPU-kärnor: 0-$((TOTAL_CPUS - 1)) ($TOTAL_CPUS st)"
-read -p "Dedikerad CPU-kärna (standard: $DEFAULT_CPU): " CPU_INPUT
-CPU_CORE=${CPU_INPUT:-$DEFAULT_CPU}
-if [ "$CPU_CORE" -ge 0 ] 2>/dev/null && [ "$CPU_CORE" -lt "$TOTAL_CPUS" ]; then
-    echo "  ✓ Använder CPU-kärna $CPU_CORE"
-else
-    echo "  ⚠️  Ogiltigt val, använder kärna $DEFAULT_CPU"
-    CPU_CORE=$DEFAULT_CPU
-fi
+echo "  Port: $PORT"
+echo "  CPU:  Kärna $CPU_CORE (av $TOTAL_CPUS)"
 
 # Om vi kör från en git-klonad mapp, använd den som repo-URL
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,11 +37,8 @@ if [ -d "$REPO_ROOT/.git" ]; then
 fi
 
 if [ -z "$GIT_URL" ]; then
-    read -p "GitHub repo URL: " GIT_URL
-    if [ -z "$GIT_URL" ]; then
-        echo "❌ Ingen repo URL angiven"
-        exit 1
-    fi
+    echo "❌ Ingen repo URL hittad (kör från git-klonad mapp)"
+    exit 1
 fi
 
 echo ""
@@ -88,20 +65,7 @@ TOTAL_SWAP=$(free -m 2>/dev/null | awk '/^Swap:/{print $2}')
 if [ -n "$TOTAL_RAM" ]; then
     echo "  RAM: ${TOTAL_RAM}MB, Swap: ${TOTAL_SWAP:-0}MB"
     if [ "$TOTAL_RAM" -lt 600 ] && [ "${TOTAL_SWAP:-0}" -lt 100 ]; then
-        echo ""
-        echo "  ⚠️  Lite RAM och ingen swap upptäckt!"
-        echo "  Rekommendation: Lägg till swap för stabilitet:"
-        echo "    sudo fallocate -l 256M /swapfile"
-        echo "    sudo chmod 600 /swapfile"
-        echo "    sudo mkswap /swapfile"
-        echo "    sudo swapon /swapfile"
-        echo "    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab"
-        echo ""
-        read -p "  Fortsätt ändå? (j/n): " CONTINUE_NO_SWAP
-        if [ "$CONTINUE_NO_SWAP" = "n" ] || [ "$CONTINUE_NO_SWAP" = "N" ]; then
-            echo "  Lägg till swap och kör scriptet igen."
-            exit 0
-        fi
+        echo "  ⚠️  Lite RAM och ingen swap — rekommenderar minst 256MB swap"
     fi
 fi
 
