@@ -910,6 +910,34 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // GET /api/sonos/cloud-config
+      if (req.method === 'GET' && pathname === '/api/sonos/cloud-config') {
+        sendJson(res, {
+          ok: true,
+          enabled: cloudConfig.enabled,
+          url: cloudConfig.url,
+          secret: cloudConfig.secret ? '••••••••' : '',
+          intervalMs: cloudConfig.intervalMs,
+          hasSecret: !!cloudConfig.secret,
+        });
+        return;
+      }
+
+      // PUT /api/sonos/cloud-config
+      if (req.method === 'PUT' && pathname === '/api/sonos/cloud-config') {
+        const body = await parseBody(req);
+        const cfg = loadSonosConfig();
+        if (typeof body.enabled === 'boolean') cfg.cloudPushEnabled = body.enabled;
+        if (typeof body.url === 'string') cfg.cloudPushUrl = body.url.trim();
+        if (typeof body.secret === 'string' && body.secret !== '••••••••') cfg.cloudPushSecret = body.secret;
+        if (typeof body.intervalMs === 'number' && body.intervalMs >= 100) cfg.cloudPushIntervalMs = body.intervalMs;
+        saveSonosConfig(cfg);
+        cloudConfig = loadCloudConfig();
+        log.info(`☁️ [CLOUD] Config updated: enabled=${cloudConfig.enabled}, url=${cloudConfig.url ? '✓' : '✗'}`);
+        sendJson(res, { ok: true, enabled: cloudConfig.enabled, url: cloudConfig.url, hasSecret: !!cloudConfig.secret, intervalMs: cloudConfig.intervalMs });
+        return;
+      }
+
       // POST /api/sonos/update — git pull + signal restart
       if (req.method === 'POST' && pathname === '/api/sonos/update') {
         const { execSync } = require('child_process');
