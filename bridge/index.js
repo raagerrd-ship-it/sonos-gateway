@@ -387,7 +387,7 @@ function cloudPush(eventData) {
 function doCloudPush(payload) {
   lastCloudPush = Date.now();
   const body = JSON.stringify(payload);
-  const url = new URL(CLOUD_PUSH_URL);
+  const url = new URL(cloudConfig.url);
   const isHttps = url.protocol === 'https:';
   const options = {
     hostname: url.hostname,
@@ -396,7 +396,7 @@ function doCloudPush(payload) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-bridge-secret': CLOUD_PUSH_SECRET,
+      'x-bridge-secret': cloudConfig.secret,
       'Content-Length': Buffer.byteLength(body),
     },
     timeout: 10000,
@@ -419,10 +419,10 @@ function doCloudPush(payload) {
   req.end();
 }
 
-if (CLOUD_PUSH_URL) {
-  log.info(`☁️ [CLOUD] Push enabled → ${CLOUD_PUSH_URL}`);
+if (cloudConfig.enabled && cloudConfig.url) {
+  log.info(`☁️ [CLOUD] Push enabled → ${cloudConfig.url}`);
 } else {
-  log.info(`☁️ [CLOUD] Push disabled (no CLOUD_PUSH_URL)`);
+  log.info(`☁️ [CLOUD] Push disabled`);
 }
 
 function emitSonosEvent(eventData) {
