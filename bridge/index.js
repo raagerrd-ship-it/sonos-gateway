@@ -325,6 +325,7 @@ let cloudConfig = loadCloudConfig();
 let lastCloudPush = 0;
 let cloudPushPending = false;
 let lastCloudPushData = null;
+let cloudPushStatus = { lastPushAt: null, statusCode: null, ok: null, error: null, responseBody: null };
 
 function cloudPush(eventData) {
   if (!cloudConfig.enabled || !cloudConfig.url || !cloudConfig.secret) return;
