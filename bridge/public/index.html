@@ -122,8 +122,41 @@
 </head>
 <body>
   <div class="container">
-    <h1>🔊 Sonos Proxy</h1>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <h1>🔊 Sonos Proxy</h1>
+      <button class="settings-toggle" onclick="toggleSettings()" title="Inställningar">⚙️</button>
+    </div>
     <p class="subtitle">Välj aktiv Sonos-högtalare</p>
+    
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+      <h3>☁️ Cloud Push</h3>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Skicka till databas</div>
+          <div class="setting-desc">Pusha speldata till Brew Monitor TV</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="cloudEnabled" onchange="markSettingsDirty()">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div id="cloudFields">
+        <div style="padding-top:8px;">
+          <div class="setting-label">Endpoint URL</div>
+          <input class="setting-input" id="cloudUrl" type="url" placeholder="https://..." oninput="markSettingsDirty()">
+        </div>
+        <div style="padding-top:8px;">
+          <div class="setting-label">Secret / API-nyckel</div>
+          <input class="setting-input" id="cloudSecret" type="password" placeholder="Hemlig nyckel" oninput="markSettingsDirty()">
+        </div>
+        <div style="padding-top:8px;">
+          <div class="setting-label">Push-intervall (ms)</div>
+          <input class="setting-input" id="cloudInterval" type="number" min="100" step="100" placeholder="1000" oninput="markSettingsDirty()">
+        </div>
+      </div>
+      <button class="settings-save" id="saveCloudBtn" onclick="saveCloudConfig()" disabled>Spara</button>
+    </div>
     
     <!-- Now Playing -->
     <div class="now-playing" id="nowPlaying">
