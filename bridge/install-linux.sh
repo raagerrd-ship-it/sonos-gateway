@@ -73,7 +73,7 @@ if ! command -v node &> /dev/null; then
     echo "  Node.js hittades inte. Försöker installera..."
     if command -v apt-get &> /dev/null; then
         # Använd NodeSource LTS för ARM-stöd (Pi Zero 2 W = armv7l/aarch64)
-        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
         sudo apt-get install -y nodejs
     else
         echo "  ❌ Installera Node.js 18+ manuellt: https://nodejs.org"
