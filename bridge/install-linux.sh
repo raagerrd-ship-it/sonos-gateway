@@ -73,7 +73,7 @@ if ! command -v node &> /dev/null; then
     echo "  Node.js hittades inte. Försöker installera..."
     if command -v apt-get &> /dev/null; then
         # Använd NodeSource LTS för ARM-stöd (Pi Zero 2 W = armv7l/aarch64)
-        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
         sudo apt-get install -y nodejs
     else
         echo "  ❌ Installera Node.js 18+ manuellt: https://nodejs.org"
@@ -98,28 +98,38 @@ fi
 
 # 3. Klona eller uppdatera repo
 echo "[3/6] Hämtar kod från GitHub..."
+
+# Spara användarfiler innan vi rör repot
+SAVED_CONFIG=""
+SAVED_ENV=""
+if [ -f "$BRIDGE_DIR/config.json" ]; then
+    SAVED_CONFIG=$(cat "$BRIDGE_DIR/config.json")
+fi
+if [ -f "$BRIDGE_DIR/.env" ]; then
+    SAVED_ENV=$(cat "$BRIDGE_DIR/.env")
+fi
+
 if [ -d "$REPO_DIR/.git" ]; then
     echo "  Repo finns redan, uppdaterar..."
     cd "$REPO_DIR"
     git fetch --all
-    git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+    BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+    git reset --hard "origin/$BRANCH"
     echo "  ✓ Uppdaterad till $(git log -1 --format='%h %s')"
 else
-    # Spara eventuell befintlig config
-    SAVED_CONFIG=""
-    if [ -f "$REPO_DIR/bridge/config.json" ]; then
-        SAVED_CONFIG=$(cat "$REPO_DIR/bridge/config.json")
-    fi
-    
     rm -rf "$REPO_DIR"
     git clone "$GIT_URL" "$REPO_DIR"
     echo "  ✓ Klonad till $REPO_DIR"
-    
-    # Återställ sparad config
-    if [ -n "$SAVED_CONFIG" ]; then
-        echo "$SAVED_CONFIG" > "$BRIDGE_DIR/config.json"
-        echo "  ✓ Återställde sparad config.json"
-    fi
+fi
+
+# Återställ sparade användarfiler
+if [ -n "$SAVED_CONFIG" ]; then
+    echo "$SAVED_CONFIG" > "$BRIDGE_DIR/config.json"
+    echo "  ✓ Återställde sparad config.json"
+fi
+if [ -n "$SAVED_ENV" ]; then
+    echo "$SAVED_ENV" > "$BRIDGE_DIR/.env"
+    echo "  ✓ Återställde sparad .env"
 fi
 
 # 4. Installera dependencies
@@ -203,7 +213,8 @@ if [ -f "$SCRIPT_DIR/config.json" ]; then
 fi
 
 # Pull changes
-git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+git reset --hard "origin/$BRANCH"
 echo "$LOG_TAG Pulled: $(git log -1 --format='%h %s')"
 
 # Återställ config
@@ -214,7 +225,7 @@ fi
 
 # Installera eventuella nya dependencies
 cd "$SCRIPT_DIR"
-npm install --production 2>/dev/null
+npm install --production || echo "$LOG_TAG Warning: npm install failed"
 
 # Starta om tjänsten
 systemctl --user restart "$SERVICE_NAME"
