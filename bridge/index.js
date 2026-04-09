@@ -9,6 +9,19 @@ const { discoverSonos } = require('./discover');
 // Version
 const VERSION = '1.0.0';
 
+// Git commit hash — resolved once at startup
+const { execSync } = require('child_process');
+let GIT_COMMIT = 'unknown';
+let GIT_COMMIT_SHORT = 'unknown';
+let GIT_BRANCH = 'unknown';
+try {
+  GIT_COMMIT = execSync('git rev-parse HEAD', { cwd: __dirname, timeout: 3000 }).toString().trim();
+  GIT_COMMIT_SHORT = GIT_COMMIT.substring(0, 7);
+  GIT_BRANCH = execSync('git rev-parse --abbrev-ref HEAD', { cwd: __dirname, timeout: 3000 }).toString().trim();
+} catch (e) {
+  // Not a git repo or git not available
+}
+
 // Configuration
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -876,18 +889,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
-      // GET /api/sonos/version — current git commit hash + version info
+      // GET /api/sonos/version
       if (req.method === 'GET' && pathname === '/api/sonos/version') {
-        const { execSync } = require('child_process');
-        const repoDir = path.resolve(__dirname, '..');
-        try {
-          const commitHash = execSync('git rev-parse --short HEAD', { cwd: repoDir, timeout: 5000, encoding: 'utf8' }).trim();
-          const commitDate = execSync('git log -1 --format=%ci', { cwd: repoDir, timeout: 5000, encoding: 'utf8' }).trim();
-          const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repoDir, timeout: 5000, encoding: 'utf8' }).trim();
-          sendJson(res, { ok: true, commitHash, commitDate, branch });
-        } catch (e) {
-          sendJson(res, { ok: false, error: e.message }, 500);
-        }
+        sendJson(res, {
+          name: 'sonos-buddy',
+          version: VERSION,
+          commit: GIT_COMMIT,
+          commitShort: GIT_COMMIT_SHORT,
+          branch: GIT_BRANCH
+        });
         return;
       }
 
@@ -1091,11 +1101,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
-      // GET /api/sonos/version
-      if (req.method === 'GET' && pathname === '/api/sonos/version') {
-        sendJson(res, { ok: true, version: VERSION, sonosIp: SONOS_IP, uptime: process.uptime() });
-        return;
-      }
       
       sendJson(res, { error: 'Not Found' }, 404);
     } catch (error) {
