@@ -158,6 +158,17 @@
         </div>
       </div>
       <button class="settings-save" id="saveCloudBtn" onclick="saveCloudConfig()" disabled>Spara</button>
+      
+      <!-- Push Status -->
+      <div id="pushStatus" style="display:none; margin-top:12px; padding:10px; background:#0a0a0a; border-radius:8px; border:1px solid #222;">
+        <div style="font-size:0.7rem; color:#555; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">Senaste push</div>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span id="pushStatusText" style="font-size:0.8rem; color:#888;">—</span>
+          <span id="pushStatusBadge" style="font-size:0.65rem; padding:2px 8px; border-radius:4px; font-weight:600;"></span>
+        </div>
+        <div id="pushStatusTime" style="font-size:0.7rem; color:#444; margin-top:4px;"></div>
+        <div id="pushStatusError" style="display:none; font-size:0.75rem; color:#f87171; margin-top:6px; font-family:monospace; word-break:break-all;"></div>
+      </div>
     </div>
     
     <!-- Now Playing -->
