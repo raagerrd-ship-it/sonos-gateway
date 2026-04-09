@@ -12,10 +12,12 @@ echo "  Sonos Proxy Uninstaller"
 echo "========================================"
 echo ""
 
-# 1. Stop and disable services
+# 1. Stop and disable all services and timers
 echo "[1/3] Stoppar tjänster..."
 systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+systemctl --user stop "$SERVICE_NAME-update.service" 2>/dev/null || true
 systemctl --user stop "$SERVICE_NAME-update.timer" 2>/dev/null || true
+systemctl --user stop "$SERVICE_NAME-restart.service" 2>/dev/null || true
 systemctl --user stop "$SERVICE_NAME-restart.timer" 2>/dev/null || true
 systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
 systemctl --user disable "$SERVICE_NAME-update.timer" 2>/dev/null || true

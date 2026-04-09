@@ -28,6 +28,12 @@ echo ""
 echo "  Port: $PORT"
 echo "  CPU:  Kärna $CPU_CORE (av $TOTAL_CPUS)"
 
+# Validera CPU_CORE
+if [ "$CPU_CORE" -ge "$TOTAL_CPUS" ] 2>/dev/null; then
+    echo "  ⚠️  Kärna $CPU_CORE finns inte (max $(( TOTAL_CPUS - 1 ))). Använder kärna 0."
+    CPU_CORE=0
+fi
+
 # Om vi kör från en git-klonad mapp, använd den som repo-URL
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -117,9 +123,18 @@ if [ -d "$REPO_DIR/.git" ]; then
     git reset --hard "origin/$BRANCH"
     echo "  ✓ Uppdaterad till $(git log -1 --format='%h %s')"
 else
-    rm -rf "$REPO_DIR"
-    git clone "$GIT_URL" "$REPO_DIR"
-    echo "  ✓ Klonad till $REPO_DIR"
+    # Klona till temp-mapp först, flytta vid lyckad klon
+    TEMP_DIR="${REPO_DIR}.tmp.$$"
+    rm -rf "$TEMP_DIR"
+    if git clone "$GIT_URL" "$TEMP_DIR"; then
+        rm -rf "$REPO_DIR"
+        mv "$TEMP_DIR" "$REPO_DIR"
+        echo "  ✓ Klonad till $REPO_DIR"
+    else
+        rm -rf "$TEMP_DIR"
+        echo "  ❌ Git clone misslyckades"
+        exit 1
+    fi
 fi
 
 # Återställ sparade användarfiler
@@ -135,18 +150,24 @@ fi
 # 4. Installera dependencies
 echo "[4/6] Installerar dependencies..."
 cd "$BRIDGE_DIR"
-npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund"
+npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund" || true
 
-# Skapa .env om den inte finns
-if [ ! -f "$BRIDGE_DIR/.env" ]; then
+# Skapa eller uppdatera .env med korrekt PORT
+if [ -f "$BRIDGE_DIR/.env" ]; then
+    # Uppdatera PORT i befintlig .env
+    if grep -q "^PORT=" "$BRIDGE_DIR/.env"; then
+        sed -i "s/^PORT=.*/PORT=$PORT/" "$BRIDGE_DIR/.env"
+    else
+        echo "PORT=$PORT" >> "$BRIDGE_DIR/.env"
+    fi
+    echo "  ✓ Behöll befintlig .env (PORT=$PORT)"
+else
     cat > "$BRIDGE_DIR/.env" << EOF
 # Sonos Proxy Configuration
 PORT=$PORT
 SONOS_IP=192.168.1.175
 EOF
     echo "  ✓ Skapade .env med port $PORT"
-else
-    echo "  ✓ Behöll befintlig .env"
 fi
 
 # 5. Systemd services
@@ -206,10 +227,14 @@ fi
 
 echo "$LOG_TAG Update available: $LOCAL → $REMOTE"
 
-# Spara config.json
+# Spara config.json och .env
 CONFIG_BACKUP=""
+ENV_BACKUP=""
 if [ -f "$SCRIPT_DIR/config.json" ]; then
     CONFIG_BACKUP=$(cat "$SCRIPT_DIR/config.json")
+fi
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    ENV_BACKUP=$(cat "$SCRIPT_DIR/.env")
 fi
 
 # Pull changes
@@ -217,15 +242,19 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git reset --hard "origin/$BRANCH"
 echo "$LOG_TAG Pulled: $(git log -1 --format='%h %s')"
 
-# Återställ config
+# Återställ config och .env
 if [ -n "$CONFIG_BACKUP" ]; then
     echo "$CONFIG_BACKUP" > "$SCRIPT_DIR/config.json"
     echo "$LOG_TAG Restored config.json"
 fi
+if [ -n "$ENV_BACKUP" ]; then
+    echo "$ENV_BACKUP" > "$SCRIPT_DIR/.env"
+    echo "$LOG_TAG Restored .env"
+fi
 
 # Installera eventuella nya dependencies
 cd "$SCRIPT_DIR"
-npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund" || echo "$LOG_TAG Warning: npm install failed"
+npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund" || true
 
 # Starta om tjänsten
 systemctl --user restart "$SERVICE_NAME"
