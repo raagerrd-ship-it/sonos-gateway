@@ -213,7 +213,8 @@ if [ -f "$SCRIPT_DIR/config.json" ]; then
 fi
 
 # Pull changes
-git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+git reset --hard "origin/$BRANCH"
 echo "$LOG_TAG Pulled: $(git log -1 --format='%h %s')"
 
 # Återställ config
@@ -224,7 +225,7 @@ fi
 
 # Installera eventuella nya dependencies
 cd "$SCRIPT_DIR"
-npm install --production 2>/dev/null
+npm install --production || echo "$LOG_TAG Warning: npm install failed"
 
 # Starta om tjänsten
 systemctl --user restart "$SERVICE_NAME"
