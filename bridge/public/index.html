@@ -143,12 +143,14 @@
       </div>
       <div id="cloudFields">
         <div style="padding-top:8px;">
-          <div class="setting-label">Endpoint URL</div>
-          <input class="setting-input" id="cloudUrl" type="url" placeholder="https://..." oninput="markSettingsDirty()">
+          <div class="setting-label">Edge Function URL</div>
+          <div class="setting-desc">T.ex. https://xxx.supabase.co/functions/v1/sonos-bridge-push</div>
+          <input class="setting-input" id="cloudUrl" type="url" placeholder="https://plwchu...supabase.co/functions/v1/sonos-bridge-push" oninput="markSettingsDirty()">
         </div>
         <div style="padding-top:8px;">
-          <div class="setting-label">Secret / API-nyckel</div>
-          <input class="setting-input" id="cloudSecret" type="password" placeholder="Hemlig nyckel" oninput="markSettingsDirty()">
+          <div class="setting-label">Bridge Secret</div>
+          <div class="setting-desc">Måste matcha SONOS_BRIDGE_SECRET i Lovable Cloud</div>
+          <input class="setting-input" id="cloudSecret" type="password" placeholder="Hemlig nyckel (x-bridge-secret)" oninput="markSettingsDirty()">
         </div>
         <div style="padding-top:8px;">
           <div class="setting-label">Push-intervall (ms)</div>
