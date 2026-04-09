@@ -73,12 +73,90 @@
     
     .empty-state { text-align: center; padding: 32px; color: #555; font-size: 0.85rem; }
     .status-bar { margin-top: 24px; font-size: 0.7rem; color: #444; text-align: center; }
+    
+    /* Settings */
+    .settings-toggle {
+      background: none; border: none; color: #555; font-size: 1.2rem; cursor: pointer;
+      padding: 4px 8px; border-radius: 6px; transition: all 0.15s;
+    }
+    .settings-toggle:hover { color: #aaa; background: #1a1a1a; }
+    .settings-panel {
+      background: #161616; border: 1px solid #222; border-radius: 12px;
+      padding: 16px; margin-bottom: 24px; display: none;
+    }
+    .settings-panel.open { display: block; }
+    .settings-panel h3 { font-size: 0.85rem; font-weight: 600; color: #aaa; margin-bottom: 12px; }
+    .setting-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 0; border-bottom: 1px solid #1a1a1a;
+    }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { font-size: 0.85rem; color: #ccc; }
+    .setting-desc { font-size: 0.7rem; color: #555; margin-top: 2px; }
+    .setting-input {
+      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #333;
+      background: #0a0a0a; color: #ccc; font-size: 0.85rem; margin-top: 8px;
+      font-family: monospace;
+    }
+    .setting-input:focus { outline: none; border-color: #555; }
+    .toggle-switch {
+      position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; background: #333; border-radius: 12px; transition: 0.2s;
+    }
+    .toggle-slider:before {
+      content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background: #888; border-radius: 50%; transition: 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: #1a3a1a; }
+    .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); background: #4ade80; }
+    .settings-save {
+      margin-top: 12px; width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #333;
+      background: #1a1a1a; color: #ccc; font-size: 0.85rem; cursor: pointer; transition: all 0.15s;
+    }
+    .settings-save:hover { background: #252525; border-color: #4ade80; color: #fff; }
+    .settings-save:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🔊 Sonos Proxy</h1>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <h1>🔊 Sonos Proxy</h1>
+      <button class="settings-toggle" onclick="toggleSettings()" title="Inställningar">⚙️</button>
+    </div>
     <p class="subtitle">Välj aktiv Sonos-högtalare</p>
+    
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+      <h3>☁️ Cloud Push</h3>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Skicka till databas</div>
+          <div class="setting-desc">Pusha speldata till Brew Monitor TV</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="cloudEnabled" onchange="markSettingsDirty()">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div id="cloudFields">
+        <div style="padding-top:8px;">
+          <div class="setting-label">Endpoint URL</div>
+          <input class="setting-input" id="cloudUrl" type="url" placeholder="https://..." oninput="markSettingsDirty()">
+        </div>
+        <div style="padding-top:8px;">
+          <div class="setting-label">Secret / API-nyckel</div>
+          <input class="setting-input" id="cloudSecret" type="password" placeholder="Hemlig nyckel" oninput="markSettingsDirty()">
+        </div>
+        <div style="padding-top:8px;">
+          <div class="setting-label">Push-intervall (ms)</div>
+          <input class="setting-input" id="cloudInterval" type="number" min="100" step="100" placeholder="1000" oninput="markSettingsDirty()">
+        </div>
+      </div>
+      <button class="settings-save" id="saveCloudBtn" onclick="saveCloudConfig()" disabled>Spara</button>
+    </div>
     
     <!-- Now Playing -->
     <div class="now-playing" id="nowPlaying">
@@ -310,6 +388,59 @@
         btn.disabled = false;
         btn.textContent = '⬆ Uppdatera';
         btn.classList.remove('btn-scanning');
+      }
+    }
+
+    // Fetch initial status immediately, then connect SSE for updates
+    // ============ Settings ============
+    function toggleSettings() {
+      const panel = document.getElementById('settingsPanel');
+      panel.classList.toggle('open');
+      if (panel.classList.contains('open')) loadCloudConfig();
+    }
+    
+    function markSettingsDirty() {
+      document.getElementById('saveCloudBtn').disabled = false;
+    }
+    
+    async function loadCloudConfig() {
+      try {
+        const res = await fetch('/api/sonos/cloud-config');
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('cloudEnabled').checked = data.enabled;
+          document.getElementById('cloudUrl').value = data.url || '';
+          document.getElementById('cloudSecret').value = data.hasSecret ? '••••••••' : '';
+          document.getElementById('cloudInterval').value = data.intervalMs || 1000;
+          document.getElementById('saveCloudBtn').disabled = true;
+        }
+      } catch (e) {}
+    }
+    
+    async function saveCloudConfig() {
+      const btn = document.getElementById('saveCloudBtn');
+      btn.disabled = true;
+      btn.textContent = 'Sparar...';
+      try {
+        const body = {
+          enabled: document.getElementById('cloudEnabled').checked,
+          url: document.getElementById('cloudUrl').value,
+          secret: document.getElementById('cloudSecret').value,
+          intervalMs: parseInt(document.getElementById('cloudInterval').value) || 1000,
+        };
+        const res = await fetch('/api/sonos/cloud-config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('statusBar').textContent = '☁️ Cloud-inställningar sparade';
+        }
+      } catch (e) {
+        document.getElementById('statusBar').textContent = '❌ Kunde inte spara';
+      } finally {
+        btn.textContent = 'Spara';
       }
     }
 

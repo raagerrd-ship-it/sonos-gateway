@@ -310,15 +310,24 @@ function cancelPendingSonosIdle(reason) {
 
 // ============ Cloud Push to Brew Monitor TV ============
 
-const CLOUD_PUSH_URL = process.env.CLOUD_PUSH_URL || null;
-const CLOUD_PUSH_SECRET = process.env.CLOUD_PUSH_SECRET || null;
-const CLOUD_PUSH_INTERVAL_MS = parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000');
+// Cloud push config — persisted in config.json, overridden by env vars on first boot
+function loadCloudConfig() {
+  const cfg = loadSonosConfig();
+  return {
+    enabled: cfg.cloudPushEnabled ?? (!!process.env.CLOUD_PUSH_URL),
+    url: cfg.cloudPushUrl || process.env.CLOUD_PUSH_URL || '',
+    secret: cfg.cloudPushSecret || process.env.CLOUD_PUSH_SECRET || '',
+    intervalMs: cfg.cloudPushIntervalMs || parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000'),
+  };
+}
+
+let cloudConfig = loadCloudConfig();
 let lastCloudPush = 0;
 let cloudPushPending = false;
 let lastCloudPushData = null;
 
 function cloudPush(eventData) {
-  if (!CLOUD_PUSH_URL || !CLOUD_PUSH_SECRET) return;
+  if (!cloudConfig.enabled || !cloudConfig.url || !cloudConfig.secret) return;
 
   // Build payload with raw album art URIs (not local proxy paths)
   const payload = {
@@ -354,9 +363,9 @@ function cloudPush(eventData) {
     groupName: eventData.groupName || null,
   };
 
-  // Throttle: don't push more often than CLOUD_PUSH_INTERVAL_MS
+  // Throttle: don't push more often than cloudConfig.intervalMs
   const now = Date.now();
-  if (now - lastCloudPush < CLOUD_PUSH_INTERVAL_MS) {
+  if (now - lastCloudPush < cloudConfig.intervalMs) {
     lastCloudPushData = payload;
     if (!cloudPushPending) {
       cloudPushPending = true;
@@ -367,7 +376,7 @@ function cloudPush(eventData) {
           lastCloudPushData = null;
           doCloudPush(p);
         }
-      }, CLOUD_PUSH_INTERVAL_MS - (now - lastCloudPush));
+      }, cloudConfig.intervalMs - (now - lastCloudPush));
     }
     return;
   }
@@ -378,7 +387,7 @@ function cloudPush(eventData) {
 function doCloudPush(payload) {
   lastCloudPush = Date.now();
   const body = JSON.stringify(payload);
-  const url = new URL(CLOUD_PUSH_URL);
+  const url = new URL(cloudConfig.url);
   const isHttps = url.protocol === 'https:';
   const options = {
     hostname: url.hostname,
@@ -387,7 +396,7 @@ function doCloudPush(payload) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-bridge-secret': CLOUD_PUSH_SECRET,
+      'x-bridge-secret': cloudConfig.secret,
       'Content-Length': Buffer.byteLength(body),
     },
     timeout: 10000,
@@ -410,10 +419,10 @@ function doCloudPush(payload) {
   req.end();
 }
 
-if (CLOUD_PUSH_URL) {
-  log.info(`☁️ [CLOUD] Push enabled → ${CLOUD_PUSH_URL}`);
+if (cloudConfig.enabled && cloudConfig.url) {
+  log.info(`☁️ [CLOUD] Push enabled → ${cloudConfig.url}`);
 } else {
-  log.info(`☁️ [CLOUD] Push disabled (no CLOUD_PUSH_URL)`);
+  log.info(`☁️ [CLOUD] Push disabled`);
 }
 
 function emitSonosEvent(eventData) {
@@ -898,6 +907,34 @@ const server = http.createServer(async (req, res) => {
           commitShort: GIT_COMMIT_SHORT,
           branch: GIT_BRANCH
         });
+        return;
+      }
+
+      // GET /api/sonos/cloud-config
+      if (req.method === 'GET' && pathname === '/api/sonos/cloud-config') {
+        sendJson(res, {
+          ok: true,
+          enabled: cloudConfig.enabled,
+          url: cloudConfig.url,
+          secret: cloudConfig.secret ? '••••••••' : '',
+          intervalMs: cloudConfig.intervalMs,
+          hasSecret: !!cloudConfig.secret,
+        });
+        return;
+      }
+
+      // PUT /api/sonos/cloud-config
+      if (req.method === 'PUT' && pathname === '/api/sonos/cloud-config') {
+        const body = await parseBody(req);
+        const cfg = loadSonosConfig();
+        if (typeof body.enabled === 'boolean') cfg.cloudPushEnabled = body.enabled;
+        if (typeof body.url === 'string') cfg.cloudPushUrl = body.url.trim();
+        if (typeof body.secret === 'string' && body.secret !== '••••••••') cfg.cloudPushSecret = body.secret;
+        if (typeof body.intervalMs === 'number' && body.intervalMs >= 100) cfg.cloudPushIntervalMs = body.intervalMs;
+        saveSonosConfig(cfg);
+        cloudConfig = loadCloudConfig();
+        log.info(`☁️ [CLOUD] Config updated: enabled=${cloudConfig.enabled}, url=${cloudConfig.url ? '✓' : '✗'}`);
+        sendJson(res, { ok: true, enabled: cloudConfig.enabled, url: cloudConfig.url, hasSecret: !!cloudConfig.secret, intervalMs: cloudConfig.intervalMs });
         return;
       }
 
