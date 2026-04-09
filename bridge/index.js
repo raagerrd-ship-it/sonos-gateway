@@ -876,6 +876,21 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
+      // GET /api/sonos/version — current git commit hash + version info
+      if (req.method === 'GET' && pathname === '/api/sonos/version') {
+        const { execSync } = require('child_process');
+        const repoDir = path.resolve(__dirname, '..');
+        try {
+          const commitHash = execSync('git rev-parse --short HEAD', { cwd: repoDir, timeout: 5000, encoding: 'utf8' }).trim();
+          const commitDate = execSync('git log -1 --format=%ci', { cwd: repoDir, timeout: 5000, encoding: 'utf8' }).trim();
+          const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repoDir, timeout: 5000, encoding: 'utf8' }).trim();
+          sendJson(res, { ok: true, commitHash, commitDate, branch });
+        } catch (e) {
+          sendJson(res, { ok: false, error: e.message }, 500);
+        }
+        return;
+      }
+
       // POST /api/sonos/update — git pull + signal restart
       if (req.method === 'POST' && pathname === '/api/sonos/update') {
         const { execSync } = require('child_process');
