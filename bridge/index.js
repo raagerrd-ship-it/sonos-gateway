@@ -967,7 +967,7 @@ const server = http.createServer(async (req, res) => {
             return;
           }
           // Install deps if package.json changed
-          try { execSync('npm install --production', { cwd: path.join(repoDir, 'bridge'), timeout: 30000, encoding: 'utf8' }); } catch (e) {}
+          try { execSync('npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\\|looking for funding\\|npm fund"', { cwd: path.join(repoDir, 'bridge'), timeout: 30000, encoding: 'utf8', shell: '/bin/bash' }); } catch (e) {}
           sendJson(res, { ok: true, updated: true, message: 'Uppdaterad! Startar om...', output: pullResult.trim() });
           // Restart after response is sent
           setTimeout(() => { process.exit(0); }, 500);
