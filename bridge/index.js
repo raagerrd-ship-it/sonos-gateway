@@ -310,15 +310,24 @@ function cancelPendingSonosIdle(reason) {
 
 // ============ Cloud Push to Brew Monitor TV ============
 
-const CLOUD_PUSH_URL = process.env.CLOUD_PUSH_URL || null;
-const CLOUD_PUSH_SECRET = process.env.CLOUD_PUSH_SECRET || null;
-const CLOUD_PUSH_INTERVAL_MS = parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000');
+// Cloud push config — persisted in config.json, overridden by env vars on first boot
+function loadCloudConfig() {
+  const cfg = loadSonosConfig();
+  return {
+    enabled: cfg.cloudPushEnabled ?? (!!process.env.CLOUD_PUSH_URL),
+    url: cfg.cloudPushUrl || process.env.CLOUD_PUSH_URL || '',
+    secret: cfg.cloudPushSecret || process.env.CLOUD_PUSH_SECRET || '',
+    intervalMs: cfg.cloudPushIntervalMs || parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000'),
+  };
+}
+
+let cloudConfig = loadCloudConfig();
 let lastCloudPush = 0;
 let cloudPushPending = false;
 let lastCloudPushData = null;
 
 function cloudPush(eventData) {
-  if (!CLOUD_PUSH_URL || !CLOUD_PUSH_SECRET) return;
+  if (!cloudConfig.enabled || !cloudConfig.url || !cloudConfig.secret) return;
 
   // Build payload with raw album art URIs (not local proxy paths)
   const payload = {
