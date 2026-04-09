@@ -426,6 +426,7 @@
           document.getElementById('cloudSecret').value = data.hasSecret ? '••••••••' : '';
           document.getElementById('cloudInterval').value = data.intervalMs || 1000;
           document.getElementById('saveCloudBtn').disabled = true;
+          renderPushStatus(data.pushStatus);
         }
       } catch (e) {}
     }
