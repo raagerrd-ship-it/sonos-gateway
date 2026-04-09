@@ -363,9 +363,9 @@ function cloudPush(eventData) {
     groupName: eventData.groupName || null,
   };
 
-  // Throttle: don't push more often than CLOUD_PUSH_INTERVAL_MS
+  // Throttle: don't push more often than cloudConfig.intervalMs
   const now = Date.now();
-  if (now - lastCloudPush < CLOUD_PUSH_INTERVAL_MS) {
+  if (now - lastCloudPush < cloudConfig.intervalMs) {
     lastCloudPushData = payload;
     if (!cloudPushPending) {
       cloudPushPending = true;
@@ -376,7 +376,7 @@ function cloudPush(eventData) {
           lastCloudPushData = null;
           doCloudPush(p);
         }
-      }, CLOUD_PUSH_INTERVAL_MS - (now - lastCloudPush));
+      }, cloudConfig.intervalMs - (now - lastCloudPush));
     }
     return;
   }
