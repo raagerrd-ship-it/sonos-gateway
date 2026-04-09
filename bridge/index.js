@@ -935,6 +935,7 @@ const server = http.createServer(async (req, res) => {
           secret: cloudConfig.secret ? '••••••••' : '',
           intervalMs: cloudConfig.intervalMs,
           hasSecret: !!cloudConfig.secret,
+          pushStatus: cloudPushStatus,
         });
         return;
       }
