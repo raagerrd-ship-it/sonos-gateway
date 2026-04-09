@@ -135,7 +135,7 @@ fi
 # 4. Installera dependencies
 echo "[4/6] Installerar dependencies..."
 cd "$BRIDGE_DIR"
-npm install --production
+npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund"
 
 # Skapa .env om den inte finns
 if [ ! -f "$BRIDGE_DIR/.env" ]; then
@@ -225,7 +225,7 @@ fi
 
 # Installera eventuella nya dependencies
 cd "$SCRIPT_DIR"
-npm install --production || echo "$LOG_TAG Warning: npm install failed"
+npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund" || echo "$LOG_TAG Warning: npm install failed"
 
 # Starta om tjänsten
 systemctl --user restart "$SERVICE_NAME"
