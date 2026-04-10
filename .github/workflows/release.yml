@@ -1,5 +1,8 @@
 name: Build and Release
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main]
@@ -18,7 +21,7 @@ jobs:
 
       - name: Install production dependencies
         working-directory: bridge
-        run: npm ci --omit=dev
+        run: npm install --omit=dev --package-lock=false
 
       - name: Package dist.tar.gz
         run: tar czf dist.tar.gz bridge/
