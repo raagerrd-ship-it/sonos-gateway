@@ -18,7 +18,7 @@ jobs:
 
       - name: Install production dependencies
         working-directory: bridge
-        run: npm ci --omit=dev
+        run: npm install --omit=dev --package-lock=false
 
       - name: Package dist.tar.gz
         run: tar czf dist.tar.gz bridge/
