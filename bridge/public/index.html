@@ -568,6 +568,7 @@
         const res = await fetch('/api/sonos/status');
         const data = await res.json();
         if (data && (data.trackName || data.playbackState)) {
+          lastFullData = data;
           updateNowPlaying(data);
         }
       } catch (e) {}
