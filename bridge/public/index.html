@@ -162,6 +162,24 @@
       </div>
       <button class="settings-save" id="saveCloudBtn" onclick="saveCloudConfig()" disabled>Spara</button>
       
+      <!-- Debug Logging -->
+      <div style="margin-top:16px; padding-top:16px; border-top:1px solid #222;">
+        <h3>🔍 Debug-loggning</h3>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Logga rådata</div>
+            <div class="setting-desc">Skriver ut rå XML/DIDL-data i journalctl-loggen</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="debugEnabled" onchange="toggleDebug(this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div id="debugHint" style="display:none; font-size:0.7rem; color:#888; margin-top:6px; font-family:monospace; background:#0a0a0a; padding:8px; border-radius:6px;">
+          journalctl --user -u sonos-proxy -f
+        </div>
+      </div>
+      
       <!-- Push Status -->
       <div id="pushStatus" style="display:none; margin-top:12px; padding:10px; background:#0a0a0a; border-radius:8px; border:1px solid #222;">
         <div style="font-size:0.7rem; color:#555; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">Senaste push</div>
@@ -464,6 +482,7 @@
       panel.classList.toggle('open');
       if (panel.classList.contains('open')) {
         loadCloudConfig();
+        loadDebugState();
         pushStatusInterval = setInterval(async () => {
           try {
             const res = await fetch('/api/sonos/cloud-config');
@@ -500,6 +519,31 @@
         document.getElementById('statusBar').textContent = '❌ Kunde inte spara';
       } finally {
         btn.textContent = 'Spara';
+      }
+    }
+
+    async function loadDebugState() {
+      try {
+        const res = await fetch('/api/sonos/debug');
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('debugEnabled').checked = data.enabled;
+          document.getElementById('debugHint').style.display = data.enabled ? 'block' : 'none';
+        }
+      } catch (e) {}
+    }
+
+    async function toggleDebug(enabled) {
+      try {
+        await fetch('/api/sonos/debug', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        document.getElementById('debugHint').style.display = enabled ? 'block' : 'none';
+        document.getElementById('statusBar').textContent = enabled ? '🔍 Debug-loggning aktiverad' : 'Debug-loggning avstängd';
+      } catch (e) {
+        document.getElementById('statusBar').textContent = '❌ Kunde inte ändra debug';
       }
     }
 

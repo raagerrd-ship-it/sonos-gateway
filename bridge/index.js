@@ -54,6 +54,7 @@ function saveSonosConfig(cfg) {
 
 let sonosConfig = loadSonosConfig();
 let SONOS_IP = sonosConfig.sonosIp;
+let debugLogging = sonosConfig.debugLogging || false;
 
 // ============ Logging ============
 
@@ -176,6 +177,7 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
   let nextAlbumArtUri = null;
   let rawNextAlbumArtUri = null;
 
+  if (debugLogging) log.info(`[RAW-NEXT] nextMeta: ${nextMeta || 'NULL'}`);
   log.info(`[NEXT-TRACK] resolveNextTrack called — nextMeta: ${nextMeta ? nextMeta.substring(0, 120) + '...' : 'NULL'}, trackNumber: ${trackNumber}, nrTracks: ${nrTracks}`);
 
   if (nextMeta) {
@@ -637,12 +639,15 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     
     const playbackState = getSonosPlaybackState(transportState);
     let albumArtUri = null;
-    log.info(`[ART] DIDL albumArtURI: ${didl?.albumArtURI || 'NULL'}`);
+    if (debugLogging) {
+      log.info(`[RAW] posXml (first 500): ${posXml?.substring(0, 500)}`);
+      log.info(`[RAW] mediaXml (first 500): ${mediaXml?.substring(0, 500)}`);
+      log.info(`[RAW] DIDL parsed: ${didl ? JSON.stringify(didl) : 'NULL'}`);
+    }
     if (didl && didl.albumArtURI) {
       albumArtUri = didl.albumArtURI.startsWith('/')
         ? `/api/sonos${didl.albumArtURI}`
         : `/api/sonos/art?url=${encodeURIComponent(didl.albumArtURI)}`;
-      log.info(`[ART] Resolved albumArtUri: ${albumArtUri}`);
     }
     
     const nrTracks = extractTag(mediaXml, 'NrTracks');
@@ -928,6 +933,23 @@ const server = http.createServer(async (req, res) => {
           commitShort: GIT_COMMIT_SHORT,
           branch: GIT_BRANCH
         });
+        return;
+      }
+
+      // GET /api/sonos/debug
+      if (req.method === 'GET' && pathname === '/api/sonos/debug') {
+        sendJson(res, { ok: true, enabled: debugLogging });
+        return;
+      }
+
+      // PUT /api/sonos/debug
+      if (req.method === 'PUT' && pathname === '/api/sonos/debug') {
+        const body = await parseBody(req);
+        debugLogging = !!body.enabled;
+        sonosConfig.debugLogging = debugLogging;
+        saveSonosConfig(sonosConfig);
+        log.info(`[DEBUG] Raw debug logging ${debugLogging ? 'ENABLED' : 'DISABLED'} via UI`);
+        sendJson(res, { ok: true, enabled: debugLogging });
         return;
       }
 
