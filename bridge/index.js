@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const { discoverSonos } = require('./discover');
+const { extractPalette } = require('./palette');
 
 // Version
 const VERSION = '1.0.0';
