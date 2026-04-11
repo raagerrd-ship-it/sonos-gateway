@@ -176,9 +176,12 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
   let nextAlbumArtUri = null;
   let rawNextAlbumArtUri = null;
 
+  log.info(`[NEXT-TRACK] resolveNextTrack called — nextMeta: ${nextMeta ? nextMeta.substring(0, 120) + '...' : 'NULL'}, trackNumber: ${trackNumber}, nrTracks: ${nrTracks}`);
+
   if (nextMeta) {
     let nextDidl = extractDidl(nextMeta);
     if (!nextDidl) nextDidl = extractDidl(decodeXmlEntities(nextMeta));
+    log.info(`[NEXT-TRACK] nextDidl parsed: ${nextDidl ? JSON.stringify({ title: nextDidl.title, creator: nextDidl.creator, albumArtURI: nextDidl.albumArtURI }) : 'NULL'}`);
     if (nextDidl) {
       nextTrackName = nextDidl.title || null;
       nextArtistName = nextDidl.creator || null;
@@ -634,10 +637,12 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     
     const playbackState = getSonosPlaybackState(transportState);
     let albumArtUri = null;
+    log.info(`[ART] DIDL albumArtURI: ${didl?.albumArtURI || 'NULL'}`);
     if (didl && didl.albumArtURI) {
       albumArtUri = didl.albumArtURI.startsWith('/')
         ? `/api/sonos${didl.albumArtURI}`
         : `/api/sonos/art?url=${encodeURIComponent(didl.albumArtURI)}`;
+      log.info(`[ART] Resolved albumArtUri: ${albumArtUri}`);
     }
     
     const nrTracks = extractTag(mediaXml, 'NrTracks');

@@ -124,7 +124,10 @@
   <div class="container">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
       <h1>🔊 Sonos Proxy</h1>
-      <button class="settings-toggle" onclick="toggleSettings()" title="Inställningar">⚙️</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn" id="updateBtn" onclick="updateService()" title="Uppdatera från Git" style="font-size:0.75rem; padding:4px 10px;">⬆ Uppdatera</button>
+        <button class="settings-toggle" onclick="toggleSettings()" title="Inställningar">⚙️</button>
+      </div>
     </div>
     <p class="subtitle">Välj aktiv Sonos-högtalare</p>
     
@@ -191,10 +194,7 @@
     <!-- Devices -->
     <div class="section-header">
       <span class="section-title">Enheter på nätverket</span>
-      <div style="display:flex;gap:8px;">
-        <button class="btn" id="updateBtn" onclick="updateService()">⬆ Uppdatera</button>
-        <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
-      </div>
+      <button class="btn" id="scanBtn" onclick="scanDevices()">Skanna</button>
     </div>
     <div class="device-list" id="deviceList">
       <div class="empty-state">Klicka "Skanna" för att hitta Sonos-enheter</div>
