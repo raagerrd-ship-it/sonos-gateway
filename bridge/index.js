@@ -370,6 +370,7 @@ function cloudPush(eventData) {
     protocolInfo: eventData.protocolInfo || null,
     groupId: eventData.groupId || null,
     groupName: eventData.groupName || null,
+    palette: eventData.palette || cachedPalette || [],
   };
 
   // Throttle: don't push more often than cloudConfig.intervalMs
@@ -1115,7 +1116,8 @@ const server = http.createServer(async (req, res) => {
             streamContent: didl ? didl.streamContent : null,
             radioShowMd: didl ? didl.radioShowMd : null,
             originalTrackNumber: didl?.originalTrackNumber ? parseInt(didl.originalTrackNumber, 10) : null,
-            protocolInfo: didl ? didl.protocolInfo : null
+            protocolInfo: didl ? didl.protocolInfo : null,
+            palette: cachedPalette || []
           });
         } catch (err) {
           log.error(`❌ Sonos status error: ${err.message}`);
