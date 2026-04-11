@@ -682,6 +682,13 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
         .catch(() => { paletteExtractionInProgress = false; });
     }
     
+    // Pre-fetch palette for next track (warm cache so it's instant on track change)
+    if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri !== cachedRawAlbumArtUri) {
+      extractPalette(cachedRawNextAlbumArtUri, SONOS_IP, log)
+        .then(() => log.info('🎨 [PALETTE] Next track palette pre-cached'))
+        .catch(() => {}); // silent fail, it's just a pre-fetch
+    }
+    
     fetchZoneGroupInfo().catch(() => {});
     
     const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
