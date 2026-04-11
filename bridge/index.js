@@ -669,6 +669,7 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     
     // Extract palette on album art change (new track)
     if (cachedRawAlbumArtUri && cachedRawAlbumArtUri !== previousRawAlbumArtUri && !paletteExtractionInProgress) {
+      cachedNextPalette = []; // Reset — next track is now current
       paletteExtractionInProgress = true;
       extractPalette(cachedRawAlbumArtUri, SONOS_IP, log)
         .then(palette => {
