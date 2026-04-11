@@ -192,8 +192,8 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
         const cleanUri = nextDidl.albumArtURI.replace(/&amp;/g, '&');
         rawNextAlbumArtUri = cleanUri;
         nextAlbumArtUri = cleanUri.startsWith('/')
-          ? `/api/sonos${cleanUri}`
-          : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
+          ? `http://${SONOS_IP}:1400${cleanUri}`
+          : cleanUri;
       }
     }
   }
@@ -223,8 +223,8 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
               const cleanUri = browseDidl.albumArtURI.replace(/&amp;/g, '&');
               rawNextAlbumArtUri = cleanUri;
               nextAlbumArtUri = cleanUri.startsWith('/')
-                ? `/api/sonos${cleanUri}`
-                : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
+                ? `http://${SONOS_IP}:1400${cleanUri}`
+                : cleanUri;
             }
           }
         }
@@ -655,8 +655,8 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     if (didl && didl.albumArtURI) {
       const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
       albumArtUri = cleanUri.startsWith('/')
-        ? `/api/sonos${cleanUri}`
-        : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
+        ? `http://${SONOS_IP}:1400${cleanUri}`
+        : cleanUri;
     }
     
     const nrTracks = extractTag(mediaXml, 'NrTracks');
@@ -1106,8 +1106,8 @@ const server = http.createServer(async (req, res) => {
           if (didl && didl.albumArtURI) {
             const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
             albumArtUri = cleanUri.startsWith('/')
-              ? `/api/sonos${cleanUri}`
-              : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
+              ? `http://${SONOS_IP}:1400${cleanUri}`
+              : cleanUri;
           }
           
           const nrTracks = extractTag(mediaXml, 'NrTracks');
