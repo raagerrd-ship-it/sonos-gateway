@@ -225,6 +225,7 @@
     let currentUuid = null;
     let currentIp = null;
     let eventSource = null;
+    let lastFullData = null; // Cache full event data (with art, next track)
     
     async function loadConfig() {
       try {
@@ -324,8 +325,21 @@
       eventSource.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
-          // Only update if we actually have meaningful data
-          if (data && (data.trackName || data.playbackState)) {
+          if (!data || (!data.trackName && !data.playbackState)) return;
+          
+          if (data.source === 'position-tick') {
+            // Merge tick with last full data so art/next track aren't lost
+            if (lastFullData) {
+              const merged = { ...lastFullData, ...data,
+                albumArtUri: lastFullData.albumArtUri,
+                nextTrackName: lastFullData.nextTrackName,
+                nextArtistName: lastFullData.nextArtistName,
+                nextAlbumArtUri: lastFullData.nextAlbumArtUri,
+              };
+              updateNowPlaying(merged);
+            }
+          } else {
+            lastFullData = data;
             updateNowPlaying(data);
           }
         } catch (err) {}
