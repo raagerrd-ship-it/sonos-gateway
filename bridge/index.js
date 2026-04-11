@@ -653,9 +653,10 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
       log.info(`[RAW] DIDL parsed: ${didl ? JSON.stringify(didl) : 'NULL'}`);
     }
     if (didl && didl.albumArtURI) {
-      albumArtUri = didl.albumArtURI.startsWith('/')
-        ? `/api/sonos${didl.albumArtURI}`
-        : `/api/sonos/art?url=${encodeURIComponent(didl.albumArtURI)}`;
+      const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
+      albumArtUri = cleanUri.startsWith('/')
+        ? `/api/sonos${cleanUri}`
+        : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
     }
     
     const nrTracks = extractTag(mediaXml, 'NrTracks');
@@ -1103,9 +1104,10 @@ const server = http.createServer(async (req, res) => {
           
           let albumArtUri = null;
           if (didl && didl.albumArtURI) {
-            albumArtUri = didl.albumArtURI.startsWith('/')
-              ? `/api/sonos${didl.albumArtURI}`
-              : `/api/sonos/art?url=${encodeURIComponent(didl.albumArtURI)}`;
+            const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
+            albumArtUri = cleanUri.startsWith('/')
+              ? `/api/sonos${cleanUri}`
+              : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
           }
           
           const nrTracks = extractTag(mediaXml, 'NrTracks');
