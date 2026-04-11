@@ -521,6 +521,31 @@
       }
     }
 
+    async function loadDebugState() {
+      try {
+        const res = await fetch('/api/sonos/debug');
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('debugEnabled').checked = data.enabled;
+          document.getElementById('debugHint').style.display = data.enabled ? 'block' : 'none';
+        }
+      } catch (e) {}
+    }
+
+    async function toggleDebug(enabled) {
+      try {
+        await fetch('/api/sonos/debug', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        document.getElementById('debugHint').style.display = enabled ? 'block' : 'none';
+        document.getElementById('statusBar').textContent = enabled ? '🔍 Debug-loggning aktiverad' : 'Debug-loggning avstängd';
+      } catch (e) {
+        document.getElementById('statusBar').textContent = '❌ Kunde inte ändra debug';
+      }
+    }
+
     // Fetch initial status immediately, then connect SSE for updates
     async function init() {
       await loadConfig();
