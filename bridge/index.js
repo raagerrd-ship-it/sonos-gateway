@@ -660,8 +660,27 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     const nextMeta = extractTag(mediaXml, 'NextAVTransportURIMetaData');
     const { nextTrackName, nextArtistName, nextAlbumArtUri, rawNextAlbumArtUri } = await resolveNextTrack(nextMeta, trackNumber, nrTracks);
     
+    const previousRawAlbumArtUri = cachedRawAlbumArtUri;
     cachedRawAlbumArtUri = didl?.albumArtURI || cachedRawAlbumArtUri;
     cachedRawNextAlbumArtUri = rawNextAlbumArtUri || cachedRawNextAlbumArtUri;
+    
+    // Extract palette on album art change (new track)
+    if (didl?.albumArtURI && didl.albumArtURI !== previousRawAlbumArtUri && !paletteExtractionInProgress) {
+      paletteExtractionInProgress = true;
+      extractPalette(didl.albumArtURI, SONOS_IP, log)
+        .then(palette => {
+          cachedPalette = palette;
+          paletteExtractionInProgress = false;
+          // Re-broadcast with palette if we have a last event
+          if (lastSonosEvent) {
+            lastSonosEvent.palette = palette;
+            broadcastSSE({ ...lastSonosEvent, palette, source: 'palette-update' });
+            cloudPush({ ...lastSonosEvent, palette });
+          }
+        })
+        .catch(() => { paletteExtractionInProgress = false; });
+    }
+    
     fetchZoneGroupInfo().catch(() => {});
     
     const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
@@ -706,6 +725,7 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
       protocolInfo: didl ? didl.protocolInfo : null,
       groupId: cachedGroupId,
       groupName: cachedGroupName,
+      palette: cachedPalette,
       timestamp: Date.now()
     };
 
