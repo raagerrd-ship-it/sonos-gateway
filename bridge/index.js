@@ -668,7 +668,9 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     // Extract palette on album art change (new track)
     if (didl?.albumArtURI && didl.albumArtURI !== previousRawAlbumArtUri && !paletteExtractionInProgress) {
       paletteExtractionInProgress = true;
-      extractPalette(didl.albumArtURI, SONOS_IP, log)
+      // Decode HTML entities (&amp; -> &) from DIDL XML before building URL
+      const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
+      extractPalette(cleanUri, SONOS_IP, log)
         .then(palette => {
           cachedPalette = palette;
           paletteExtractionInProgress = false;
