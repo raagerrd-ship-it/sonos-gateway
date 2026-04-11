@@ -189,10 +189,11 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
       nextTrackName = nextDidl.title || null;
       nextArtistName = nextDidl.creator || null;
       if (nextDidl.albumArtURI) {
-        rawNextAlbumArtUri = nextDidl.albumArtURI;
-        nextAlbumArtUri = nextDidl.albumArtURI.startsWith('/')
-          ? `/api/sonos${nextDidl.albumArtURI}`
-          : `/api/sonos/art?url=${encodeURIComponent(nextDidl.albumArtURI)}`;
+        const cleanUri = nextDidl.albumArtURI.replace(/&amp;/g, '&');
+        rawNextAlbumArtUri = cleanUri;
+        nextAlbumArtUri = cleanUri.startsWith('/')
+          ? `/api/sonos${cleanUri}`
+          : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
       }
     }
   }
@@ -219,10 +220,11 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
             nextTrackName = browseDidl.title || null;
             nextArtistName = browseDidl.creator || null;
             if (browseDidl.albumArtURI) {
-              rawNextAlbumArtUri = browseDidl.albumArtURI;
-              nextAlbumArtUri = browseDidl.albumArtURI.startsWith('/')
-                ? `/api/sonos${browseDidl.albumArtURI}`
-                : `/api/sonos/art?url=${encodeURIComponent(browseDidl.albumArtURI)}`;
+              const cleanUri = browseDidl.albumArtURI.replace(/&amp;/g, '&');
+              rawNextAlbumArtUri = cleanUri;
+              nextAlbumArtUri = cleanUri.startsWith('/')
+                ? `/api/sonos${cleanUri}`
+                : `/api/sonos/art?url=${encodeURIComponent(cleanUri)}`;
             }
           }
         }
