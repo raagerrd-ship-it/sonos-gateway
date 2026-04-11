@@ -250,6 +250,7 @@ let cachedGroupName = null;
 let cachedRawAlbumArtUri = null;
 let cachedRawNextAlbumArtUri = null;
 let cachedPalette = [];
+let cachedNextPalette = [];
 let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
 const SONOS_IDLE_DEBOUNCE_MS = 2000;
@@ -371,6 +372,7 @@ function cloudPush(eventData) {
     groupId: eventData.groupId || null,
     groupName: eventData.groupName || null,
     palette: eventData.palette || cachedPalette || [],
+    nextPalette: eventData.nextPalette || cachedNextPalette || [],
   };
 
   // Throttle: don't push more often than cloudConfig.intervalMs
@@ -667,6 +669,7 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     
     // Extract palette on album art change (new track)
     if (cachedRawAlbumArtUri && cachedRawAlbumArtUri !== previousRawAlbumArtUri && !paletteExtractionInProgress) {
+      cachedNextPalette = []; // Reset — next track is now current
       paletteExtractionInProgress = true;
       extractPalette(cachedRawAlbumArtUri, SONOS_IP, log)
         .then(palette => {
@@ -682,11 +685,20 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
         .catch(() => { paletteExtractionInProgress = false; });
     }
     
-    // Pre-fetch palette for next track (warm cache so it's instant on track change)
+    // Pre-fetch palette for next track and expose as nextPalette
     if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri !== cachedRawAlbumArtUri) {
       extractPalette(cachedRawNextAlbumArtUri, SONOS_IP, log)
-        .then(() => log.info('🎨 [PALETTE] Next track palette pre-cached'))
-        .catch(() => {}); // silent fail, it's just a pre-fetch
+        .then(palette => {
+          cachedNextPalette = palette;
+          log.info('🎨 [PALETTE] Next track palette pre-cached');
+          // Broadcast updated nextPalette to SSE clients
+          if (lastSonosEvent) {
+            lastSonosEvent.nextPalette = palette;
+            broadcastSSE({ ...lastSonosEvent, nextPalette: palette, source: 'next-palette-update' });
+            cloudPush({ ...lastSonosEvent, nextPalette: palette });
+          }
+        })
+        .catch(() => {}); // silent fail
     }
     
     fetchZoneGroupInfo().catch(() => {});
@@ -734,6 +746,7 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
       groupId: cachedGroupId,
       groupName: cachedGroupName,
       palette: cachedPalette,
+      nextPalette: cachedNextPalette,
       timestamp: Date.now()
     };
 
