@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const { discoverSonos } = require('./discover');
+const { extractPalette } = require('./palette');
 
 // Version
 const VERSION = '1.0.0';
@@ -248,6 +249,8 @@ let cachedGroupId = null;
 let cachedGroupName = null;
 let cachedRawAlbumArtUri = null;
 let cachedRawNextAlbumArtUri = null;
+let cachedPalette = [];
+let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
 const SONOS_IDLE_DEBOUNCE_MS = 2000;
 const SONOS_TRANSITION_REFRESH_MS = 700;
@@ -367,6 +370,7 @@ function cloudPush(eventData) {
     protocolInfo: eventData.protocolInfo || null,
     groupId: eventData.groupId || null,
     groupName: eventData.groupName || null,
+    palette: eventData.palette || cachedPalette || [],
   };
 
   // Throttle: don't push more often than cloudConfig.intervalMs
@@ -657,8 +661,27 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
     const nextMeta = extractTag(mediaXml, 'NextAVTransportURIMetaData');
     const { nextTrackName, nextArtistName, nextAlbumArtUri, rawNextAlbumArtUri } = await resolveNextTrack(nextMeta, trackNumber, nrTracks);
     
+    const previousRawAlbumArtUri = cachedRawAlbumArtUri;
     cachedRawAlbumArtUri = didl?.albumArtURI || cachedRawAlbumArtUri;
     cachedRawNextAlbumArtUri = rawNextAlbumArtUri || cachedRawNextAlbumArtUri;
+    
+    // Extract palette on album art change (new track)
+    if (didl?.albumArtURI && didl.albumArtURI !== previousRawAlbumArtUri && !paletteExtractionInProgress) {
+      paletteExtractionInProgress = true;
+      extractPalette(didl.albumArtURI, SONOS_IP, log)
+        .then(palette => {
+          cachedPalette = palette;
+          paletteExtractionInProgress = false;
+          // Re-broadcast with palette if we have a last event
+          if (lastSonosEvent) {
+            lastSonosEvent.palette = palette;
+            broadcastSSE({ ...lastSonosEvent, palette, source: 'palette-update' });
+            cloudPush({ ...lastSonosEvent, palette });
+          }
+        })
+        .catch(() => { paletteExtractionInProgress = false; });
+    }
+    
     fetchZoneGroupInfo().catch(() => {});
     
     const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
@@ -703,6 +726,7 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
       protocolInfo: didl ? didl.protocolInfo : null,
       groupId: cachedGroupId,
       groupName: cachedGroupName,
+      palette: cachedPalette,
       timestamp: Date.now()
     };
 
@@ -1092,7 +1116,8 @@ const server = http.createServer(async (req, res) => {
             streamContent: didl ? didl.streamContent : null,
             radioShowMd: didl ? didl.radioShowMd : null,
             originalTrackNumber: didl?.originalTrackNumber ? parseInt(didl.originalTrackNumber, 10) : null,
-            protocolInfo: didl ? didl.protocolInfo : null
+            protocolInfo: didl ? didl.protocolInfo : null,
+            palette: cachedPalette || []
           });
         } catch (err) {
           log.error(`❌ Sonos status error: ${err.message}`);
