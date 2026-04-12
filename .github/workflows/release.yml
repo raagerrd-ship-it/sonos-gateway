@@ -41,7 +41,7 @@ jobs:
 
       # Package dist.tar.gz with Pi Control Center structure
       - name: Create tarball
-        run: tar czf dist.tar.gz engine/ dist/ scripts/
+        run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/
 
       - name: Delete existing 'latest' release
         run: gh release delete latest --yes 2>/dev/null || true
