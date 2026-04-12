@@ -1,0 +1,24 @@
+{
+  "key": "sonos-buddy",
+  "name": "Sonos Buddy",
+  "repo": "https://github.com/raagerrd-ship-it/sonos-gateway.git",
+  "releaseUrl": "https://api.github.com/repos/raagerrd-ship-it/sonos-gateway/releases/latest",
+  "installDir": "/opt/sonos-buddy",
+  "installScript": "scripts/install.sh",
+  "updateScript": "/opt/sonos-buddy/scripts/update.sh",
+  "uninstallScript": "scripts/uninstall.sh",
+  "components": {
+    "engine": {
+      "type": "node",
+      "entrypoint": "engine/index.js",
+      "service": "sonos-buddy-engine",
+      "alwaysOn": true
+    },
+    "ui": {
+      "type": "static",
+      "entrypoint": "dist/",
+      "service": "sonos-buddy-ui",
+      "alwaysOn": false
+    }
+  }
+}
