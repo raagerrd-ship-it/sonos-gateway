@@ -30,9 +30,9 @@ try {
 
 // Configuration
 const CONFIG_FILE = path.join(__dirname, 'config.json');
-const PORT = parseInt(process.env.PORT || '3052');
-const UI_PORT = parseInt(process.env.UI_PORT || '3002');
-const ENGINE_PORT = parseInt(process.env.ENGINE_PORT || String(PORT));
+const UI_PORT = parseInt(process.env.UI_PORT || process.env.PORT || '3002');
+const ENGINE_PORT = parseInt(process.env.ENGINE_PORT || String(UI_PORT + 50));
+const PORT = ENGINE_PORT;
 
 // Load persisted config or fall back to env
 function loadSonosConfig() {
