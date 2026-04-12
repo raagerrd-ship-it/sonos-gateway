@@ -37,9 +37,9 @@ export function EngineStatus() {
         )}
       </div>
       <div>
-        {health.status === 'ok' ? '●' : '○'} {health.sonosIp}
+        {health.status === 'ok' ? '🟢' : health.status === 'degraded' ? '🟡' : '🔴'} {health.sonosIp}
         {health.subscribed ? ' · Prenumererar' : ' · Ej prenumererad'}
-        {' · '}{health.memoryMB}MB RAM
+        {' · '}{health.memory.rss}MB RAM
       </div>
     </div>
   );
