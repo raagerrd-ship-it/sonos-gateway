@@ -6,7 +6,7 @@
 set -e
 
 APP_NAME="sonos-buddy"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/$APP_NAME}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/$APP_NAME}"
 
 echo ""
 echo "========================================"

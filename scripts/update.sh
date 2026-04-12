@@ -4,7 +4,7 @@
 
 set -e
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/sonos-buddy}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/sonos-buddy}"
 LOG_TAG="[SONOS-UPDATE]"
 
 echo "$LOG_TAG Starting update at $(date)"
