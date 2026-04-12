@@ -7,7 +7,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'bridge/**'
+      - 'engine/**'
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'tailwind.config.ts'
 
 jobs:
   build:
@@ -21,12 +26,21 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install production dependencies
-        working-directory: bridge
+      # Build UI
+      - name: Install UI dependencies
+        run: npm ci
+
+      - name: Build UI
+        run: npm run build
+
+      # Prepare engine with prod dependencies
+      - name: Install engine dependencies
+        working-directory: engine
         run: npm install --omit=dev --package-lock=false
 
-      - name: Package dist.tar.gz
-        run: tar czf dist.tar.gz bridge/
+      # Package dist.tar.gz with Pi Control Center structure
+      - name: Create tarball
+        run: tar czf dist.tar.gz engine/ dist/ scripts/
 
       - name: Delete existing 'latest' release
         run: gh release delete latest --yes 2>/dev/null || true
@@ -40,7 +54,11 @@ jobs:
           name: Latest Build
           body: |
             Auto-built from ${{ github.sha }}
-            Bridge release for Pi Control Center installation.
+            
+            **Pi Control Center kompatibel** — innehåller:
+            - `engine/` — Sonos UPnP motor (Node.js)
+            - `dist/` — Statiskt UI (React)
+            - `scripts/` — Install/update/uninstall
           files: dist.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
