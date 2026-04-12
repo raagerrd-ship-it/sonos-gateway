@@ -38,12 +38,19 @@ export interface CloudConfig {
 }
 
 export interface HealthResponse {
-  status: string;
+  status: 'ok' | 'degraded' | 'error';
+  service: string;
+  version: string;
   uptime: number;
+  memory: {
+    rss: number;
+    heapUsed: number;
+    heapTotal: number;
+  };
+  timestamp: string;
   sonosIp: string;
   subscribed: boolean;
   sseClients: number;
-  memoryMB: number;
 }
 
 export interface VersionResponse {
