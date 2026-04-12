@@ -1,11 +1,12 @@
 #!/bin/bash
 # Sonos Buddy — Install script for Pi Control Center
-# This script handles initial setup only. Pi Control Center manages systemd services.
+# Pi Control Center hanterar systemd-tjänster automatiskt.
+# Detta skript hanterar bara filkopiering och dependencies.
 
 set -e
 
 APP_NAME="sonos-buddy"
-INSTALL_DIR="${INSTALL_DIR:-/opt/$APP_NAME}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/$APP_NAME}"
 
 echo ""
 echo "========================================"
@@ -40,15 +41,13 @@ fi
 # Create install directory if different from repo
 if [ "$INSTALL_DIR" != "$REPO_ROOT" ]; then
   echo "Kopierar filer till $INSTALL_DIR..."
-  sudo mkdir -p "$INSTALL_DIR"
-  sudo chown "$USER:$USER" "$INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR"
 
   if [ "$SOURCE_TYPE" = "release" ]; then
     cp -r "$REPO_ROOT/engine" "$INSTALL_DIR/"
     cp -r "$REPO_ROOT/dist" "$INSTALL_DIR/"
   else
     cp -r "$REPO_ROOT/engine" "$INSTALL_DIR/"
-    # UI must be pre-built for git installs
     if [ -d "$REPO_ROOT/dist" ]; then
       cp -r "$REPO_ROOT/dist" "$INSTALL_DIR/"
     else

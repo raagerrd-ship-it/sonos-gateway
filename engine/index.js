@@ -931,13 +931,25 @@ const server = http.createServer(async (req, res) => {
 
       // GET /api/health (Pi Control Center obligatorisk)
       if (req.method === 'GET' && pathname === '/api/health') {
+        const mem = process.memoryUsage();
+        const rssMB = Math.round(mem.rss / 1024 / 1024);
+        let status = 'ok';
+        if (rssMB > 100) status = 'degraded';
+        if (!sonosSubscriptionSID) status = 'degraded';
         sendJson(res, {
-          status: 'ok',
-          uptime: process.uptime(),
+          status,
+          service: 'sonos-buddy-engine',
+          version: VERSION,
+          uptime: Math.floor(process.uptime()),
+          memory: {
+            rss: rssMB,
+            heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+            heapTotal: Math.round(mem.heapTotal / 1024 / 1024)
+          },
+          timestamp: new Date().toISOString(),
           sonosIp: SONOS_IP,
           subscribed: !!sonosSubscriptionSID,
           sseClients: sonosEventClients.length,
-          memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
         });
         return;
       }
