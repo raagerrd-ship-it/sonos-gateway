@@ -3,7 +3,7 @@
 # Pi Control Center hanterar systemd-tjänster automatiskt.
 # Detta skript rensar bara installationskatalogen.
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/sonos-buddy}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/sonos-buddy}"
 
 echo ""
 echo "========================================"

@@ -3,9 +3,9 @@
   "name": "Sonos Buddy",
   "repo": "https://github.com/raagerrd-ship-it/sonos-gateway.git",
   "releaseUrl": "https://api.github.com/repos/raagerrd-ship-it/sonos-gateway/releases/latest",
-  "installDir": "$HOME/.local/share/sonos-buddy",
+  "installDir": "/opt/sonos-buddy",
   "installScript": "scripts/install.sh",
-  "updateScript": "$HOME/.local/share/sonos-buddy/scripts/update.sh",
+  "updateScript": "/opt/sonos-buddy/scripts/update.sh",
   "uninstallScript": "scripts/uninstall.sh",
   "components": {
     "engine": {
