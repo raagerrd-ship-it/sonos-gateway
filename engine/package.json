@@ -1,0 +1,13 @@
+{
+  "name": "sonos-proxy",
+  "version": "1.0.0",
+  "description": "Standalone Sonos UPnP proxy with SSDP discovery and SSE streaming",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "sharp": "^0.33.2"
+  }
+}
