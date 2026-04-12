@@ -28,7 +28,7 @@ jobs:
 
       # Build UI
       - name: Install UI dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build UI
         run: npm run build
