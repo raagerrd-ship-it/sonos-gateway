@@ -53,7 +53,7 @@ jobs:
           tag_name: latest
           name: Latest Build
           body: |
-            Auto-built from ${{ github.sha }}
+            Auto-built from ${{ github.sha }} at ${{ github.event.head_commit.timestamp }}
             
             **Pi Control Center kompatibel** — innehåller:
             - `engine/` — Sonos UPnP motor (Node.js)
