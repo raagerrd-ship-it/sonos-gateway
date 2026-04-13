@@ -39,9 +39,14 @@ jobs:
         working-directory: engine
         run: npm install --omit=dev --package-lock=false
 
+      # Generate version.json for Pi Control Center
+      - name: Generate version.json
+        run: |
+          echo "{\"version\":\"$(node -p "require('./engine/package.json').version")\",\"commit\":\"${{ github.sha }}\",\"commitShort\":\"${GITHUB_SHA::7}\",\"branch\":\"main\"}" > engine/version.json
+
       # Package dist.tar.gz with Pi Control Center structure
       - name: Create tarball
-        run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/
+        run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/ service.json
 
       - name: Delete existing 'latest' release
         run: gh release delete latest --yes 2>/dev/null || true

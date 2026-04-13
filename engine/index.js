@@ -15,15 +15,23 @@ const VERSION = (() => {
   } catch { return '1.0.0'; }
 })();
 
-// Git commit hash — resolved once at startup
+// Git commit hash — resolved once at startup (try version.json first, then git)
 const { execSync } = require('child_process');
 let GIT_COMMIT = 'unknown';
 let GIT_COMMIT_SHORT = 'unknown';
 let GIT_BRANCH = 'unknown';
 try {
-  GIT_COMMIT = execSync('git rev-parse HEAD', { cwd: __dirname, timeout: 3000 }).toString().trim();
-  GIT_COMMIT_SHORT = GIT_COMMIT.substring(0, 7);
-  GIT_BRANCH = execSync('git rev-parse --abbrev-ref HEAD', { cwd: __dirname, timeout: 3000 }).toString().trim();
+  const versionFile = path.join(__dirname, 'version.json');
+  if (fs.existsSync(versionFile)) {
+    const vj = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
+    GIT_COMMIT = vj.commit || 'unknown';
+    GIT_COMMIT_SHORT = vj.commitShort || GIT_COMMIT.substring(0, 7);
+    GIT_BRANCH = vj.branch || 'unknown';
+  } else {
+    GIT_COMMIT = execSync('git rev-parse HEAD', { cwd: __dirname, timeout: 3000 }).toString().trim();
+    GIT_COMMIT_SHORT = GIT_COMMIT.substring(0, 7);
+    GIT_BRANCH = execSync('git rev-parse --abbrev-ref HEAD', { cwd: __dirname, timeout: 3000 }).toString().trim();
+  }
 } catch (e) {
   // Not a git repo or git not available
 }
