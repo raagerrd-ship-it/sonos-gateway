@@ -34,10 +34,16 @@ export function useSonosSSE() {
   const [connected, setConnected] = useState(false);
   const lastFullRef = useRef<SonosEvent | null>(null);
 
+  const retryDelayRef = useRef(3000);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const connect = useCallback(() => {
     const es = new EventSource(`${API_BASE}/api/events`);
 
-    es.onopen = () => setConnected(true);
+    es.onopen = () => {
+      setConnected(true);
+      retryDelayRef.current = 3000; // reset backoff on success
+    };
 
     es.onmessage = (e) => {
       try {
@@ -66,7 +72,9 @@ export function useSonosSSE() {
     es.onerror = () => {
       setConnected(false);
       es.close();
-      setTimeout(connect, 3000);
+      const delay = retryDelayRef.current;
+      retryDelayRef.current = Math.min(delay * 2, 60000); // backoff up to 60s
+      retryTimerRef.current = setTimeout(connect, delay);
     };
 
     return es;
@@ -74,7 +82,10 @@ export function useSonosSSE() {
 
   useEffect(() => {
     const es = connect();
-    return () => es.close();
+    return () => {
+      es.close();
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
   }, [connect]);
 
   return { data, connected };

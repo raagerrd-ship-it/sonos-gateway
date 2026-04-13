@@ -13,7 +13,7 @@ export function EngineStatus() {
       sonosAPI.getHealth().then((h) => { setHealth(h); setError(false); }).catch(() => setError(true));
     };
     fetch();
-    const interval = setInterval(fetch, 10000);
+    const interval = setInterval(fetch, 30000);
     return () => clearInterval(interval);
   }, []);
 
