@@ -7,9 +7,14 @@ const os = require('os');
 const { discoverSonos } = require('./discover');
 const { extractPalette } = require('./palette');
 
-// Version
+// Version — prefer version.json (CI-generated), fallback to package.json
 const VERSION = (() => {
   try {
+    const vf = path.join(__dirname, 'version.json');
+    if (fs.existsSync(vf)) {
+      const vj = JSON.parse(fs.readFileSync(vf, 'utf8'));
+      if (vj.version) return vj.version;
+    }
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
     return pkg.version || '1.0.0';
   } catch { return '1.0.0'; }
