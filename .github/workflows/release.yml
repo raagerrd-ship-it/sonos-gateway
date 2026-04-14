@@ -39,10 +39,12 @@ jobs:
         working-directory: engine
         run: npm install --omit=dev --package-lock=false
 
-      # Generate version.json for Pi Control Center
+      # Generate version.json with auto-incrementing semantic version
       - name: Generate version.json
         run: |
-          echo "{\"version\":\"$(node -p "require('./engine/package.json').version")\",\"commit\":\"${{ github.sha }}\",\"commitShort\":\"${GITHUB_SHA::7}\",\"branch\":\"main\"}" > engine/version.json
+          MAJOR_MINOR=$(node -p "require('./engine/package.json').version.split('.').slice(0,2).join('.')")
+          VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
+          echo "{\"version\":\"${VERSION}\",\"commit\":\"${{ github.sha }}\",\"commitShort\":\"${GITHUB_SHA::7}\",\"branch\":\"main\"}" > engine/version.json
 
       # Package dist.tar.gz with Pi Control Center structure
       - name: Create tarball
