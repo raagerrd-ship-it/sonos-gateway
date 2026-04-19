@@ -137,47 +137,74 @@ async function extractPaletteFromBuffer(imageBuffer) {
     pixels.push([data[i], data[i + 1], data[i + 2]]);
   }
 
-  // Pre-filter: remove very dark/light pixels before quantization
+  // Pre-filter: keep saturated pixels regardless of darkness — we lift L later
   const filtered = pixels.filter(([r, g, b]) => {
     const [, s, l] = rgbToHsl(r, g, b);
-    return s >= 0.10 && l >= 0.08 && l <= 0.92;
+    return s >= 0.22 && l >= 0.05 && l <= 0.95;
   });
 
-  // Use filtered if enough pixels, otherwise fall back to all
-  const source = filtered.length >= 16 ? filtered : pixels;
+  // Use filtered if enough pixels, otherwise relax filter, then fall back to all
+  let source = filtered;
+  if (source.length < 16) {
+    source = pixels.filter(([r, g, b]) => {
+      const [, s] = rgbToHsl(r, g, b);
+      return s >= 0.10;
+    });
+  }
+  if (source.length < 16) source = pixels;
 
-  // Median-cut to get 8 colors, then pick best 4
-  const rawColors = medianCut([...source], 3); // 2^3 = 8 buckets
+  // Median-cut to get 16 colors so we have headroom to pick the most vibrant 4
+  const rawColors = medianCut([...source], 4); // 2^4 = 16 buckets
 
-  // LED-optimize: boost saturation, filter bad colors
+  // LED-optimize: maximize saturation, LIFT lightness so LEDs glow bright.
+  // Dark colors (deep red, navy, forest) are mapped to their light siblings
+  // (bright red, sky blue, lime) by raising L while preserving hue.
   const optimized = rawColors
     .map(([r, g, b]) => {
       let [h, s, l] = rgbToHsl(r, g, b);
-      // Filter: skip low-saturation or extreme lightness
-      if (s < 0.15 || l < 0.08 || l > 0.92) return null;
-      // Boost saturation for LED vibrancy
-      s = Math.min(1, s * 1.3);
-      // Clamp lightness to useful LED range
-      l = Math.max(0.15, Math.min(0.85, l));
-      return hslToRgb(h, s, l);
+      // Skip near-grayscale only; we'll rescue dark colors by lifting L
+      if (s < 0.18) return null;
+      // Aggressively push saturation toward full
+      s = Math.min(1, 0.45 + s * 0.75);
+      // Lift lightness: dark inputs get pulled UP to LED-bright range.
+      l = 0.5 + l * 0.15;
+      l = Math.max(0.5, Math.min(0.65, l));
+      const rgb = hslToRgb(h, s, l);
+      return { rgb, h, s, l };
     })
     .filter(Boolean);
 
-  // If we have fewer than 4, fill with what we have or fallback
-  while (optimized.length < 4) {
-    if (rawColors.length > optimized.length) {
-      // Add unfiltered colors
-      const [r, g, b] = rawColors[optimized.length];
-      let [h, s, l] = rgbToHsl(r, g, b);
-      s = Math.min(1, s * 1.3);
-      l = Math.max(0.15, Math.min(0.85, l));
-      optimized.push(hslToRgb(h, s, l));
+  // Sort by vibrancy so best colors come first
+  optimized.sort((a, b) => {
+    const va = a.s * (1 - Math.abs(a.l - 0.5) * 1.2);
+    const vb = b.s * (1 - Math.abs(b.l - 0.5) * 1.2);
+    return vb - va;
+  });
+
+  // Deduplicate similar hues (keep distinct LED colors)
+  const distinct = [];
+  for (const c of optimized) {
+    const tooClose = distinct.some(d => {
+      let dh = Math.abs(d.h - c.h);
+      if (dh > 0.5) dh = 1 - dh;
+      return dh < 0.05;
+    });
+    if (!tooClose) distinct.push(c);
+    if (distinct.length >= 4) break;
+  }
+
+  const result = distinct.map(c => c.rgb);
+
+  // Fill if fewer than 4
+  while (result.length < 4) {
+    if (optimized.length > result.length) {
+      result.push(optimized[result.length].rgb);
     } else {
-      optimized.push([128, 128, 128]); // neutral fallback
+      result.push([255, 80, 80]);
     }
   }
 
-  return optimized.slice(0, 4);
+  return result.slice(0, 4);
 }
 
 /**
