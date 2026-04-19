@@ -137,18 +137,18 @@ async function extractPaletteFromBuffer(imageBuffer) {
     pixels.push([data[i], data[i + 1], data[i + 2]]);
   }
 
-  // Pre-filter: only keep reasonably saturated mid-light pixels for LED vibrancy
+  // Pre-filter: keep saturated pixels regardless of darkness — we lift L later
   const filtered = pixels.filter(([r, g, b]) => {
     const [, s, l] = rgbToHsl(r, g, b);
-    return s >= 0.25 && l >= 0.15 && l <= 0.85;
+    return s >= 0.22 && l >= 0.05 && l <= 0.95;
   });
 
   // Use filtered if enough pixels, otherwise relax filter, then fall back to all
   let source = filtered;
   if (source.length < 16) {
     source = pixels.filter(([r, g, b]) => {
-      const [, s, l] = rgbToHsl(r, g, b);
-      return s >= 0.10 && l >= 0.08 && l <= 0.92;
+      const [, s] = rgbToHsl(r, g, b);
+      return s >= 0.10;
     });
   }
   if (source.length < 16) source = pixels;
