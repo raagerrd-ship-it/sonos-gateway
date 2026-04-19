@@ -156,17 +156,20 @@ async function extractPaletteFromBuffer(imageBuffer) {
   // Median-cut to get 16 colors so we have headroom to pick the most vibrant 4
   const rawColors = medianCut([...source], 4); // 2^4 = 16 buckets
 
-  // LED-optimize: maximize saturation, normalize lightness for LED punch
+  // LED-optimize: maximize saturation, LIFT lightness so LEDs glow bright.
+  // Dark colors (deep red, navy, forest) are mapped to their light siblings
+  // (bright red, sky blue, lime) by raising L while preserving hue.
   const optimized = rawColors
     .map(([r, g, b]) => {
       let [h, s, l] = rgbToHsl(r, g, b);
-      // Skip near-grayscale and extremes
-      if (s < 0.20 || l < 0.10 || l > 0.92) return null;
+      // Skip near-grayscale only; we'll rescue dark colors by lifting L
+      if (s < 0.18) return null;
       // Aggressively push saturation toward full
-      s = Math.min(1, 0.4 + s * 0.8);
-      // Pull lightness toward 0.5 for max LED chroma (avoid washed-out / muddy)
-      l = 0.5 + (l - 0.5) * 0.5;
-      l = Math.max(0.4, Math.min(0.6, l));
+      s = Math.min(1, 0.45 + s * 0.75);
+      // Lift lightness: dark inputs get pulled UP to LED-bright range.
+      // Map any L in [0..1] to roughly [0.5..0.65] so output is always bright.
+      l = 0.5 + l * 0.15;
+      l = Math.max(0.5, Math.min(0.65, l));
       const rgb = hslToRgb(h, s, l);
       return { rgb, h, s, l };
     })
