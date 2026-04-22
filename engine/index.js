@@ -1326,6 +1326,18 @@ async function main() {
   subscribeSonosEvents();
   startPositionBroadcast();
   log.info(`📡 [SONOS] Position broadcast started`);
+
+  // Periodic GC to keep RSS low on Pi Zero 2 W (512MB total RAM).
+  // V8 holds onto old-space memory unless explicitly nudged; without this
+  // RSS slowly creeps up from ~35MB to 90MB+ even though heapUsed is small.
+  if (typeof global.gc === 'function') {
+    setInterval(() => {
+      try { global.gc(); } catch {}
+    }, 60000).unref();
+    log.info(`🧹 [GC] Periodic GC enabled (every 60s)`);
+  } else {
+    log.warn(`⚠️ [GC] --expose-gc not enabled, skipping periodic GC`);
+  }
   
   // Graceful shutdown (SIGTERM for systemd, SIGINT for dev)
   function shutdown(signal) {
