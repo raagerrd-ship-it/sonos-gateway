@@ -41,42 +41,78 @@ try {
   // Not a git repo or git not available
 }
 
-// Configuration — prefer PCC-managed dirs, fall back to install dir for standalone use
+// Configuration — PCC owns storage. /opt/ is code-only and may be wiped on update.
+//   PCC_CONFIG_DIR → user settings (settings.json)
+//   PCC_DATA_DIR   → runtime state that must survive updates (state.json: knownDevices, palette cache, …)
+//   PCC_LOG_DIR    → log files
+// Standalone fallback: keep everything under engine/ so dev still works without PCC.
 const CONFIG_DIR = process.env.PCC_CONFIG_DIR || __dirname;
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-// Legacy path (engine/config.json) used before PCC_CONFIG_DIR was honored — migrate on first read
+const DATA_DIR = process.env.PCC_DATA_DIR || __dirname;
+try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); } catch {}
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+
+const SETTINGS_FILE = path.join(CONFIG_DIR, 'settings.json');
+const STATE_FILE = path.join(DATA_DIR, 'state.json');
+// Legacy: single config.json under engine/ (pre-PCC layout) — migrate once
 const LEGACY_CONFIG_FILE = path.join(__dirname, 'config.json');
+
 const UI_PORT = parseInt(process.env.UI_PORT || process.env.PORT || '3002');
 const ENGINE_PORT = parseInt(process.env.ENGINE_PORT || String(UI_PORT + 50));
 const PORT = ENGINE_PORT;
 
-// Load persisted config or fall back to env
-function loadSonosConfig() {
+// Settings keys live in PCC_CONFIG_DIR; everything else is state in PCC_DATA_DIR.
+const SETTINGS_KEYS = new Set([
+  'sonosIp', 'sonosName', 'sonosUuid', 'debugLogging',
+  'cloudPushEnabled', 'cloudPushUrl', 'cloudPushSecret', 'cloudPushIntervalMs'
+]);
+
+function readJson(file) {
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {}
+  return null;
+}
+
+function loadSonosConfig() {
+  const settings = readJson(SETTINGS_FILE) || {};
+  const state = readJson(STATE_FILE) || {};
+  // One-time migration from legacy single config.json
+  if (!Object.keys(settings).length && !Object.keys(state).length) {
+    const legacy = readJson(LEGACY_CONFIG_FILE);
+    if (legacy && typeof legacy === 'object') {
+      for (const [k, v] of Object.entries(legacy)) {
+        if (SETTINGS_KEYS.has(k)) settings[k] = v; else state[k] = v;
+      }
+      try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch {}
+      try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch {}
     }
-    // One-time migration from legacy path when running under PCC
-    if (CONFIG_FILE !== LEGACY_CONFIG_FILE && fs.existsSync(LEGACY_CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(LEGACY_CONFIG_FILE, 'utf8'));
-    }
-  } catch (e) {}
+  }
   return {
-    sonosIp: process.env.SONOS_IP || '192.168.1.175',
-    sonosName: null,
-    sonosUuid: null,
-    knownDevices: []
+    sonosIp: settings.sonosIp || process.env.SONOS_IP || '192.168.1.175',
+    sonosName: settings.sonosName || null,
+    sonosUuid: settings.sonosUuid || null,
+    debugLogging: !!settings.debugLogging,
+    cloudPushEnabled: settings.cloudPushEnabled,
+    cloudPushUrl: settings.cloudPushUrl,
+    cloudPushSecret: settings.cloudPushSecret,
+    cloudPushIntervalMs: settings.cloudPushIntervalMs,
+    knownDevices: Array.isArray(state.knownDevices) ? state.knownDevices : []
   };
 }
 
 function saveSonosConfig(cfg) {
-  try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
-    return true;
-  } catch (e) {
-    log.error(`Config save failed: ${e.message}`);
-    return false;
+  const settings = {};
+  const state = {};
+  for (const [k, v] of Object.entries(cfg)) {
+    if (v === undefined) continue;
+    if (SETTINGS_KEYS.has(k)) settings[k] = v; else state[k] = v;
   }
+  let ok = true;
+  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); }
+  catch (e) { ok = false; log.error(`Settings save failed: ${e.message}`); }
+  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); }
+  catch (e) { ok = false; log.error(`State save failed: ${e.message}`); }
+  return ok;
 }
 
 let sonosConfig = loadSonosConfig();

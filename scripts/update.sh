@@ -9,30 +9,21 @@ LOG_TAG="[SONOS-UPDATE]"
 
 echo "$LOG_TAG Starting update at $(date)"
 
-# Preserve user config files
-CONFIG_BACKUP=""
-ENV_BACKUP=""
+# Settings/state/logs live in PCC_CONFIG_DIR / PCC_DATA_DIR / PCC_LOG_DIR (outside /opt),
+# so they survive updates automatically. Only legacy engine/config.json (pre-PCC layout)
+# may exist inside /opt/ — preserve it for one-time migration on next start.
+LEGACY_BACKUP=""
 if [ -f "$INSTALL_DIR/engine/config.json" ]; then
-  CONFIG_BACKUP=$(cat "$INSTALL_DIR/engine/config.json")
-fi
-if [ -f "$INSTALL_DIR/engine/.env" ]; then
-  ENV_BACKUP=$(cat "$INSTALL_DIR/engine/.env")
+  LEGACY_BACKUP=$(cat "$INSTALL_DIR/engine/config.json")
 fi
 
-# Pi Control Center downloads and extracts dist.tar.gz here
-# We just need to install deps and restore config
-
+# Pi Control Center downloads and extracts dist.tar.gz here; install prod deps.
 cd "$INSTALL_DIR/engine"
 npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for funding\|npm fund" || true
 
-# Restore config files
-if [ -n "$CONFIG_BACKUP" ]; then
-  echo "$CONFIG_BACKUP" > "$INSTALL_DIR/engine/config.json"
-  echo "$LOG_TAG Restored config.json"
-fi
-if [ -n "$ENV_BACKUP" ]; then
-  echo "$ENV_BACKUP" > "$INSTALL_DIR/engine/.env"
-  echo "$LOG_TAG Restored .env"
+if [ -n "$LEGACY_BACKUP" ]; then
+  echo "$LEGACY_BACKUP" > "$INSTALL_DIR/engine/config.json"
+  echo "$LOG_TAG Restored legacy config.json (will be migrated to PCC_CONFIG_DIR/PCC_DATA_DIR on next start)"
 fi
 
 echo "$LOG_TAG Update complete"
