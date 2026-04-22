@@ -962,7 +962,21 @@ function startPositionBroadcast() {
 
       if (sonosEventClients.length > 0) broadcastSSE(tickData);
       if (cloudActive) cloudPush(tickData);
-    } catch { /* ignore */ }
+    } catch {
+      // SOAP failed (timeout/network) — still emit a heartbeat tick with last known
+      // state so downstream consumers (Lotus stale-watchdog etc.) don't flip to PAUSED
+      // due to transient Sonos hiccups. Position/volume left as previous values.
+      try {
+        tickData.trackName = lastSonosEvent?.trackName || null;
+        tickData.artistName = lastSonosEvent?.artistName || null;
+        tickData.albumName = lastSonosEvent?.albumName || null;
+        tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING';
+        tickData.groupId = cachedGroupId;
+        tickData.groupName = cachedGroupName;
+        if (sonosEventClients.length > 0) broadcastSSE(tickData);
+        if (cloudActive) cloudPush(tickData);
+      } catch { /* ignore */ }
+    }
   }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
 
