@@ -41,8 +41,11 @@ try {
   // Not a git repo or git not available
 }
 
-// Configuration
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+// Configuration — prefer PCC-managed dirs, fall back to install dir for standalone use
+const CONFIG_DIR = process.env.PCC_CONFIG_DIR || __dirname;
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+// Legacy path (engine/config.json) used before PCC_CONFIG_DIR was honored — migrate on first read
+const LEGACY_CONFIG_FILE = path.join(__dirname, 'config.json');
 const UI_PORT = parseInt(process.env.UI_PORT || process.env.PORT || '3002');
 const ENGINE_PORT = parseInt(process.env.ENGINE_PORT || String(UI_PORT + 50));
 const PORT = ENGINE_PORT;
@@ -52,6 +55,10 @@ function loadSonosConfig() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    }
+    // One-time migration from legacy path when running under PCC
+    if (CONFIG_FILE !== LEGACY_CONFIG_FILE && fs.existsSync(LEGACY_CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(LEGACY_CONFIG_FILE, 'utf8'));
     }
   } catch (e) {}
   return {
