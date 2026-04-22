@@ -8,12 +8,14 @@
   "runInstallOnRelease": true,
   "updateScript": "/opt/sonos-buddy/scripts/update.sh",
   "uninstallScript": "scripts/uninstall.sh",
+  "permissions": ["network", "multicast"],
   "components": {
     "engine": {
       "type": "node",
       "entrypoint": "engine/index.js",
       "service": "sonos-buddy-engine",
-      "alwaysOn": true
+      "alwaysOn": true,
+      "permissions": ["network", "multicast"]
     },
     "ui": {
       "type": "static",
