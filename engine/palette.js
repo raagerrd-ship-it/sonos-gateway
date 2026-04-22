@@ -1,18 +1,15 @@
 /**
  * Palette extraction module for LED lighting.
- * Downloads album art, scales to ~30x30, extracts 4 dominant colors
- * using median-cut quantization, optimized for LED output.
+ * Pure-JS implementation (no sharp/libvips) — saves ~30-40MB RSS on Pi Zero 2 W.
+ *
+ * Decodes JPEG (jpeg-js) or PNG (pngjs), nearest-neighbor downsamples to 20x20,
+ * then runs median-cut quantization. Sonos album art is almost always JPEG.
  */
 
 const http = require('http');
 const https = require('https');
-const sharp = require('sharp');
-
-// Memory: disable libvips internal pixel cache (~50MB) and limit threads.
-// Critical on Pi Zero 2 W where every MB counts.
-sharp.cache(false);
-sharp.concurrency(1);
-sharp.simd(true);
+const jpeg = require('jpeg-js');
+const { PNG } = require('pngjs');
 
 // LRU cache — small footprint suits constrained RAM
 const CACHE_MAX = 8;
@@ -21,7 +18,6 @@ const paletteCache = new Map();
 function cacheGet(key) {
   if (!paletteCache.has(key)) return undefined;
   const val = paletteCache.get(key);
-  // Move to end (most recent)
   paletteCache.delete(key);
   paletteCache.set(key, val);
   return val;
@@ -36,7 +32,8 @@ function cacheSet(key, val) {
   }
 }
 
-// Download image with timeout
+// Download image with timeout + size cap (prevent runaway memory if Sonos serves something huge)
+const MAX_IMAGE_BYTES = 512 * 1024; // 512KB — album art is typically 30-150KB
 function downloadImage(url, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https') ? https : http;
@@ -47,13 +44,61 @@ function downloadImage(url, timeoutMs = 3000) {
         return;
       }
       const chunks = [];
-      res.on('data', c => chunks.push(c));
+      let total = 0;
+      res.on('data', c => {
+        total += c.length;
+        if (total > MAX_IMAGE_BYTES) {
+          req.destroy();
+          reject(new Error(`Image too large (>${MAX_IMAGE_BYTES} bytes)`));
+          return;
+        }
+        chunks.push(c);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', reject);
     });
     req.on('timeout', () => { req.destroy(); reject(new Error('Download timeout')); });
     req.on('error', reject);
   });
+}
+
+// Detect format from magic bytes
+function detectFormat(buf) {
+  if (buf.length < 4) return null;
+  if (buf[0] === 0xFF && buf[1] === 0xD8) return 'jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'png';
+  return null;
+}
+
+// Decode image to { data: Uint8Array RGBA, width, height }
+function decodeImage(buf) {
+  const fmt = detectFormat(buf);
+  if (fmt === 'jpeg') {
+    // useTArray=true returns Uint8Array (avoids extra Buffer alloc)
+    // maxMemoryUsageInMB caps decoder workspace
+    return jpeg.decode(buf, { useTArray: true, maxMemoryUsageInMB: 32, formatAsRGBA: true });
+  }
+  if (fmt === 'png') {
+    const png = PNG.sync.read(buf);
+    return { data: png.data, width: png.width, height: png.height };
+  }
+  throw new Error(`Unsupported image format (magic: ${buf.slice(0, 4).toString('hex')})`);
+}
+
+// Nearest-neighbor downsample to TARGET x TARGET, returning RGB pixel array
+const TARGET = 20;
+function downsampleToPixels(decoded) {
+  const { data, width, height } = decoded;
+  const pixels = [];
+  for (let ty = 0; ty < TARGET; ty++) {
+    const sy = Math.floor((ty + 0.5) * height / TARGET);
+    for (let tx = 0; tx < TARGET; tx++) {
+      const sx = Math.floor((tx + 0.5) * width / TARGET);
+      const i = (sy * width + sx) * 4; // RGBA
+      pixels.push([data[i], data[i + 1], data[i + 2]]);
+    }
+  }
+  return pixels;
 }
 
 // RGB to HSL
@@ -94,14 +139,12 @@ function hslToRgb(h, s, l) {
 function medianCut(pixels, depth) {
   if (depth === 0 || pixels.length === 0) {
     if (pixels.length === 0) return [[0, 0, 0]];
-    // Average the bucket
     let rSum = 0, gSum = 0, bSum = 0;
     for (const [r, g, b] of pixels) { rSum += r; gSum += g; bSum += b; }
     const n = pixels.length;
     return [[Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)]];
   }
 
-  // Find channel with greatest range
   let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
   for (const [r, g, b] of pixels) {
     if (r < rMin) rMin = r; if (r > rMax) rMax = r;
@@ -125,31 +168,15 @@ function medianCut(pixels, depth) {
 }
 
 /**
- * Extract 4 dominant LED-optimized colors from an image buffer.
- * @param {Buffer} imageBuffer - Raw image data
- * @returns {Promise<number[][]>} Array of 4 [r,g,b] arrays
+ * Extract 4 dominant LED-optimized colors from a decoded image.
  */
-async function extractPaletteFromBuffer(imageBuffer) {
-  // Scale down to ~20x20 — 400 pixels is plenty for 4 LED colors
-  const { data } = await sharp(imageBuffer)
-    .resize(20, 20, { fit: 'cover' })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  // Collect pixels
-  const pixels = [];
-  for (let i = 0; i < data.length; i += 3) {
-    pixels.push([data[i], data[i + 1], data[i + 2]]);
-  }
-
+function extractPaletteFromPixels(pixels) {
   // Pre-filter: keep saturated pixels regardless of darkness — we lift L later
   const filtered = pixels.filter(([r, g, b]) => {
     const [, s, l] = rgbToHsl(r, g, b);
     return s >= 0.22 && l >= 0.05 && l <= 0.95;
   });
 
-  // Use filtered if enough pixels, otherwise relax filter, then fall back to all
   let source = filtered;
   if (source.length < 16) {
     source = pixels.filter(([r, g, b]) => {
@@ -159,20 +186,13 @@ async function extractPaletteFromBuffer(imageBuffer) {
   }
   if (source.length < 16) source = pixels;
 
-  // Median-cut to get 16 colors so we have headroom to pick the most vibrant 4
-  const rawColors = medianCut([...source], 4); // 2^4 = 16 buckets
+  const rawColors = medianCut([...source], 4); // 16 buckets
 
-  // LED-optimize: maximize saturation, LIFT lightness so LEDs glow bright.
-  // Dark colors (deep red, navy, forest) are mapped to their light siblings
-  // (bright red, sky blue, lime) by raising L while preserving hue.
   const optimized = rawColors
     .map(([r, g, b]) => {
       let [h, s, l] = rgbToHsl(r, g, b);
-      // Skip near-grayscale only; we'll rescue dark colors by lifting L
       if (s < 0.18) return null;
-      // Aggressively push saturation toward full
       s = Math.min(1, 0.45 + s * 0.75);
-      // Lift lightness: dark inputs get pulled UP to LED-bright range.
       l = 0.5 + l * 0.15;
       l = Math.max(0.5, Math.min(0.65, l));
       const rgb = hslToRgb(h, s, l);
@@ -180,14 +200,12 @@ async function extractPaletteFromBuffer(imageBuffer) {
     })
     .filter(Boolean);
 
-  // Sort by vibrancy so best colors come first
   optimized.sort((a, b) => {
     const va = a.s * (1 - Math.abs(a.l - 0.5) * 1.2);
     const vb = b.s * (1 - Math.abs(b.l - 0.5) * 1.2);
     return vb - va;
   });
 
-  // Deduplicate similar hues (keep distinct LED colors)
   const distinct = [];
   for (const c of optimized) {
     const tooClose = distinct.some(d => {
@@ -201,7 +219,6 @@ async function extractPaletteFromBuffer(imageBuffer) {
 
   const result = distinct.map(c => c.rgb);
 
-  // Fill if fewer than 4
   while (result.length < 4) {
     if (optimized.length > result.length) {
       result.push(optimized[result.length].rgb);
@@ -215,16 +232,10 @@ async function extractPaletteFromBuffer(imageBuffer) {
 
 /**
  * Extract palette for a given albumArtURI.
- * Uses LRU cache. Builds full URL if URI starts with /.
- * @param {string} albumArtUri - Raw album art URI from Sonos
- * @param {string} sonosIp - Sonos speaker IP
- * @param {function} logger - Logging object with .warn(), .info()
- * @returns {Promise<number[][]>} Array of 4 [r,g,b] arrays, or [] on failure
  */
 async function extractPalette(albumArtUri, sonosIp, logger) {
   if (!albumArtUri) return [];
 
-  // Check cache
   const cached = cacheGet(albumArtUri);
   if (cached) {
     logger.info(`🎨 [PALETTE] Cache hit for ${albumArtUri.substring(0, 60)}`);
@@ -238,8 +249,11 @@ async function extractPalette(albumArtUri, sonosIp, logger) {
 
     logger.info(`🎨 [PALETTE] Extracting from ${fullUrl.substring(0, 80)}...`);
     let imageBuffer = await downloadImage(fullUrl, 3000);
-    const palette = await extractPaletteFromBuffer(imageBuffer);
-    imageBuffer = null; // release ASAP for GC
+    let decoded = decodeImage(imageBuffer);
+    imageBuffer = null; // release encoded buffer ASAP
+    const pixels = downsampleToPixels(decoded);
+    decoded = null; // release full RGBA buffer ASAP
+    const palette = extractPaletteFromPixels(pixels);
     cacheSet(albumArtUri, palette);
     logger.info(`🎨 [PALETTE] Extracted: ${JSON.stringify(palette)}`);
     return palette;
