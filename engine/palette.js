@@ -2,8 +2,11 @@
  * Palette extraction module for LED lighting.
  * Pure-JS implementation (no sharp/libvips) — saves ~30-40MB RSS on Pi Zero 2 W.
  *
- * Decodes JPEG (jpeg-js) or PNG (pngjs), nearest-neighbor downsamples to 20x20,
- * then runs median-cut quantization. Sonos album art is almost always JPEG.
+ * Optimized for low CPU and heap pressure:
+ *  - JPEG decoded as RGB (not RGBA) — 25% smaller pixel buffer
+ *  - Downsample directly into flat Uint8Array (no per-pixel sub-arrays)
+ *  - Median-cut operates on Uint32Array of byte-indices (in-place sort, no slicing)
+ *  - HSL conversion uses shared scratch buffer in hot loops
  */
 
 const http = require('http');
@@ -32,8 +35,8 @@ function cacheSet(key, val) {
   }
 }
 
-// Download image with timeout + size cap (prevent runaway memory if Sonos serves something huge)
-const MAX_IMAGE_BYTES = 512 * 1024; // 512KB — album art is typically 30-150KB
+// Download image with timeout + size cap
+const MAX_IMAGE_BYTES = 512 * 1024;
 function downloadImage(url, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https') ? https : http;
@@ -62,7 +65,6 @@ function downloadImage(url, timeoutMs = 3000) {
   });
 }
 
-// Detect format from magic bytes
 function detectFormat(buf) {
   if (buf.length < 4) return null;
   if (buf[0] === 0xFF && buf[1] === 0xD8) return 'jpeg';
@@ -70,53 +72,40 @@ function detectFormat(buf) {
   return null;
 }
 
-// Decode image to { data: Uint8Array RGBA, width, height }
+// Decode → { data, width, height, channels }. JPEG=3ch (RGB), PNG=4ch (RGBA).
 function decodeImage(buf) {
   const fmt = detectFormat(buf);
   if (fmt === 'jpeg') {
-    // useTArray=true returns Uint8Array (avoids extra Buffer alloc)
-    // maxMemoryUsageInMB caps decoder workspace
-    return jpeg.decode(buf, { useTArray: true, maxMemoryUsageInMB: 32, formatAsRGBA: true });
+    const decoded = jpeg.decode(buf, {
+      useTArray: true,
+      maxMemoryUsageInMB: 32,
+      formatAsRGBA: false, // RGB only — 25% smaller buffer
+    });
+    return { data: decoded.data, width: decoded.width, height: decoded.height, channels: 3 };
   }
   if (fmt === 'png') {
     const png = PNG.sync.read(buf);
-    return { data: png.data, width: png.width, height: png.height };
+    return { data: png.data, width: png.width, height: png.height, channels: 4 };
   }
   throw new Error(`Unsupported image format (magic: ${buf.slice(0, 4).toString('hex')})`);
 }
 
-// Nearest-neighbor downsample to TARGET x TARGET, returning RGB pixel array
-const TARGET = 20;
-function downsampleToPixels(decoded) {
-  const { data, width, height } = decoded;
-  const pixels = [];
-  for (let ty = 0; ty < TARGET; ty++) {
-    const sy = Math.floor((ty + 0.5) * height / TARGET);
-    for (let tx = 0; tx < TARGET; tx++) {
-      const sx = Math.floor((tx + 0.5) * width / TARGET);
-      const i = (sy * width + sx) * 4; // RGBA
-      pixels.push([data[i], data[i + 1], data[i + 2]]);
-    }
-  }
-  return pixels;
-}
-
-// RGB to HSL
-function rgbToHsl(r, g, b) {
+// HSL conversion — writes into shared scratch (no allocation in hot loops)
+function rgbToHslInto(r, g, b, out) {
   r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  const min = r < g ? (r < b ? r : b) : (g < b ? g : b);
   const l = (max + min) / 2;
-  if (max === min) return [0, 0, l];
+  if (max === min) { out[0] = 0; out[1] = 0; out[2] = l; return; }
   const d = max - min;
   const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
   let h;
   if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
   else if (max === g) h = ((b - r) / d + 2) / 6;
   else h = ((r - g) / d + 4) / 6;
-  return [h, s, l];
+  out[0] = h; out[1] = s; out[2] = l;
 }
 
-// HSL to RGB
 function hslToRgb(h, s, l) {
   if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
   const hue2rgb = (p, q, t) => {
@@ -135,98 +124,150 @@ function hslToRgb(h, s, l) {
   ];
 }
 
-// Median-cut quantization
-function medianCut(pixels, depth) {
-  if (depth === 0 || pixels.length === 0) {
-    if (pixels.length === 0) return [[0, 0, 0]];
+// Nearest-neighbor downsample directly into a flat Uint8Array (3 bytes/pixel).
+// Skips the [[r,g,b],...] intermediate array entirely.
+const TARGET = 20;
+const TARGET_PIXELS = TARGET * TARGET;
+function downsampleFlat(decoded) {
+  const { data, width, height, channels } = decoded;
+  const out = new Uint8Array(TARGET_PIXELS * 3);
+  let oi = 0;
+  for (let ty = 0; ty < TARGET; ty++) {
+    const sy = ((ty * 2 + 1) * height / (TARGET * 2)) | 0;
+    const rowBase = sy * width * channels;
+    for (let tx = 0; tx < TARGET; tx++) {
+      const sx = ((tx * 2 + 1) * width / (TARGET * 2)) | 0;
+      const i = rowBase + sx * channels;
+      out[oi++] = data[i];
+      out[oi++] = data[i + 1];
+      out[oi++] = data[i + 2];
+    }
+  }
+  return out;
+}
+
+// Median-cut on byte-indices into `flat` (each value is a multiple of 3).
+// `indices` is a Uint32Array; we sort and slice with subarray (no copy).
+function medianCutIdx(flat, indices, depth, results) {
+  if (depth === 0 || indices.length === 0) {
+    if (indices.length === 0) return;
     let rSum = 0, gSum = 0, bSum = 0;
-    for (const [r, g, b] of pixels) { rSum += r; gSum += g; bSum += b; }
-    const n = pixels.length;
-    return [[Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)]];
+    const n = indices.length;
+    for (let k = 0; k < n; k++) {
+      const i = indices[k];
+      rSum += flat[i]; gSum += flat[i + 1]; bSum += flat[i + 2];
+    }
+    results.push([Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)]);
+    return;
   }
 
+  // Range scan
   let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
-  for (const [r, g, b] of pixels) {
+  const n = indices.length;
+  for (let k = 0; k < n; k++) {
+    const i = indices[k];
+    const r = flat[i], g = flat[i + 1], b = flat[i + 2];
     if (r < rMin) rMin = r; if (r > rMax) rMax = r;
     if (g < gMin) gMin = g; if (g > gMax) gMax = g;
     if (b < bMin) bMin = b; if (b > bMax) bMax = b;
   }
 
   const rRange = rMax - rMin, gRange = gMax - gMin, bRange = bMax - bMin;
-  let sortIdx;
-  if (rRange >= gRange && rRange >= bRange) sortIdx = 0;
-  else if (gRange >= rRange && gRange >= bRange) sortIdx = 1;
-  else sortIdx = 2;
+  let off;
+  if (rRange >= gRange && rRange >= bRange) off = 0;
+  else if (gRange >= bRange) off = 1;
+  else off = 2;
 
-  pixels.sort((a, b) => a[sortIdx] - b[sortIdx]);
-  const mid = Math.floor(pixels.length / 2);
+  // In-place sort by chosen channel (typed-array sort — avoids closure allocations
+  // in V8 hot path; comparator still needed since we sort indices, not values)
+  indices.sort((a, b) => flat[a + off] - flat[b + off]);
+  const mid = n >> 1;
+  // subarray() = view, zero-copy
+  medianCutIdx(flat, indices.subarray(0, mid), depth - 1, results);
+  medianCutIdx(flat, indices.subarray(mid), depth - 1, results);
+}
 
-  return [
-    ...medianCut(pixels.slice(0, mid), depth - 1),
-    ...medianCut(pixels.slice(mid), depth - 1)
-  ];
+// LED-optimize one [r,g,b] → { rgb, h, s, l } (or null if too gray)
+const HSL_SCRATCH = new Float32Array(3);
+function ledOptimize(rgb) {
+  rgbToHslInto(rgb[0], rgb[1], rgb[2], HSL_SCRATCH);
+  let h = HSL_SCRATCH[0], s = HSL_SCRATCH[1], l = HSL_SCRATCH[2];
+  if (s < 0.18) return null;
+  s = Math.min(1, 0.45 + s * 0.75);
+  l = 0.5 + l * 0.15;
+  l = Math.max(0.5, Math.min(0.65, l));
+  return { rgb: hslToRgb(h, s, l), h, s, l };
 }
 
 /**
- * Extract 4 dominant LED-optimized colors from a decoded image.
+ * Extract 4 dominant LED-optimized colors from the flat pixel buffer.
  */
-function extractPaletteFromPixels(pixels) {
-  // Pre-filter: keep saturated pixels regardless of darkness — we lift L later
-  const filtered = pixels.filter(([r, g, b]) => {
-    const [, s, l] = rgbToHsl(r, g, b);
-    return s >= 0.22 && l >= 0.05 && l <= 0.95;
-  });
+function extractPaletteFromFlat(flat) {
+  // Build filtered index array (Uint32Array — pre-sized, no growth alloc).
+  // Pass 1: strict filter (saturated, mid-light pixels).
+  const allIndices = new Uint32Array(TARGET_PIXELS);
+  for (let i = 0; i < TARGET_PIXELS; i++) allIndices[i] = i * 3;
 
-  let source = filtered;
-  if (source.length < 16) {
-    source = pixels.filter(([r, g, b]) => {
-      const [, s] = rgbToHsl(r, g, b);
-      return s >= 0.10;
-    });
+  let source;
+  // Pass 1: s>=0.22, 0.05<=l<=0.95
+  const strict = new Uint32Array(TARGET_PIXELS);
+  let sn = 0;
+  for (let k = 0; k < TARGET_PIXELS; k++) {
+    const i = allIndices[k];
+    rgbToHslInto(flat[i], flat[i + 1], flat[i + 2], HSL_SCRATCH);
+    const s = HSL_SCRATCH[1], l = HSL_SCRATCH[2];
+    if (s >= 0.22 && l >= 0.05 && l <= 0.95) strict[sn++] = i;
   }
-  if (source.length < 16) source = pixels;
 
-  const rawColors = medianCut([...source], 4); // 16 buckets
+  if (sn >= 16) {
+    source = strict.subarray(0, sn);
+  } else {
+    // Pass 2: relax to s>=0.10
+    const relaxed = new Uint32Array(TARGET_PIXELS);
+    let rn = 0;
+    for (let k = 0; k < TARGET_PIXELS; k++) {
+      const i = allIndices[k];
+      rgbToHslInto(flat[i], flat[i + 1], flat[i + 2], HSL_SCRATCH);
+      if (HSL_SCRATCH[1] >= 0.10) relaxed[rn++] = i;
+    }
+    source = rn >= 16 ? relaxed.subarray(0, rn) : allIndices;
+  }
 
-  const optimized = rawColors
-    .map(([r, g, b]) => {
-      let [h, s, l] = rgbToHsl(r, g, b);
-      if (s < 0.18) return null;
-      s = Math.min(1, 0.45 + s * 0.75);
-      l = 0.5 + l * 0.15;
-      l = Math.max(0.5, Math.min(0.65, l));
-      const rgb = hslToRgb(h, s, l);
-      return { rgb, h, s, l };
-    })
-    .filter(Boolean);
+  // Median-cut → up to 16 buckets. Copy needed because subarray sorts mutate parent.
+  const workIndices = new Uint32Array(source);
+  const rawColors = [];
+  medianCutIdx(flat, workIndices, 4, rawColors);
 
+  // LED optimize + sort by vibrancy
+  const optimized = [];
+  for (let k = 0; k < rawColors.length; k++) {
+    const o = ledOptimize(rawColors[k]);
+    if (o) optimized.push(o);
+  }
   optimized.sort((a, b) => {
     const va = a.s * (1 - Math.abs(a.l - 0.5) * 1.2);
     const vb = b.s * (1 - Math.abs(b.l - 0.5) * 1.2);
     return vb - va;
   });
 
+  // Deduplicate similar hues
   const distinct = [];
-  for (const c of optimized) {
-    const tooClose = distinct.some(d => {
-      let dh = Math.abs(d.h - c.h);
+  for (let k = 0; k < optimized.length && distinct.length < 4; k++) {
+    const c = optimized[k];
+    let tooClose = false;
+    for (let m = 0; m < distinct.length; m++) {
+      let dh = Math.abs(distinct[m].h - c.h);
       if (dh > 0.5) dh = 1 - dh;
-      return dh < 0.05;
-    });
+      if (dh < 0.05) { tooClose = true; break; }
+    }
     if (!tooClose) distinct.push(c);
-    if (distinct.length >= 4) break;
   }
 
   const result = distinct.map(c => c.rgb);
-
   while (result.length < 4) {
-    if (optimized.length > result.length) {
-      result.push(optimized[result.length].rgb);
-    } else {
-      result.push([255, 80, 80]);
-    }
+    if (optimized.length > result.length) result.push(optimized[result.length].rgb);
+    else result.push([255, 80, 80]);
   }
-
   return result.slice(0, 4);
 }
 
@@ -251,9 +292,9 @@ async function extractPalette(albumArtUri, sonosIp, logger) {
     let imageBuffer = await downloadImage(fullUrl, 3000);
     let decoded = decodeImage(imageBuffer);
     imageBuffer = null; // release encoded buffer ASAP
-    const pixels = downsampleToPixels(decoded);
-    decoded = null; // release full RGBA buffer ASAP
-    const palette = extractPaletteFromPixels(pixels);
+    const flat = downsampleFlat(decoded);
+    decoded = null;     // release full RGB(A) buffer ASAP (~30-180KB freed)
+    const palette = extractPaletteFromFlat(flat);
     cacheSet(albumArtUri, palette);
     logger.info(`🎨 [PALETTE] Extracted: ${JSON.stringify(palette)}`);
     return palette;
