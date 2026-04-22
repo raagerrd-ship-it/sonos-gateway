@@ -88,6 +88,30 @@ let debugLogging = sonosConfig.debugLogging || false;
 const LOG_BUFFER_SIZE = 30;
 let logBuffer = [];
 
+// Optional file logging when PCC provides PCC_LOG_DIR.
+// stdout always receives logs (systemd/journald captures them); file is a parallel sink.
+let logFileStream = null;
+if (process.env.PCC_LOG_DIR) {
+  try {
+    fs.mkdirSync(process.env.PCC_LOG_DIR, { recursive: true });
+    logFileStream = fs.createWriteStream(
+      path.join(process.env.PCC_LOG_DIR, 'sonos-buddy-engine.log'),
+      { flags: 'a' }
+    );
+    logFileStream.on('error', () => { logFileStream = null; });
+  } catch { logFileStream = null; }
+}
+
+function writeFileLog(level, ts, msg, args) {
+  if (!logFileStream) return;
+  try {
+    const extra = args && args.length ? ' ' + args.map(a => {
+      try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
+    }).join(' ') : '';
+    logFileStream.write(`[${level.toUpperCase()}] ${ts} - ${msg}${extra}\n`);
+  } catch {}
+}
+
 function addToLogBuffer(level, msg, args) {
   // Skip debug entries unless DEBUG is on — keeps buffer lean
   if (level === 'debug' && !process.env.DEBUG) return;
@@ -101,11 +125,12 @@ function addToLogBuffer(level, msg, args) {
 }
 
 const log = {
-  info: (msg, ...args) => { console.log(`[INFO] ${new Date().toISOString()} - ${msg}`, ...args); addToLogBuffer('info', msg, args); },
-  warn: (msg, ...args) => { console.warn(`[WARN] ${new Date().toISOString()} - ${msg}`, ...args); addToLogBuffer('warn', msg, args); },
-  error: (msg, ...args) => { console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`, ...args); addToLogBuffer('error', msg, args); },
+  info: (msg, ...args) => { const ts = new Date().toISOString(); console.log(`[INFO] ${ts} - ${msg}`, ...args); writeFileLog('info', ts, msg, args); addToLogBuffer('info', msg, args); },
+  warn: (msg, ...args) => { const ts = new Date().toISOString(); console.warn(`[WARN] ${ts} - ${msg}`, ...args); writeFileLog('warn', ts, msg, args); addToLogBuffer('warn', msg, args); },
+  error: (msg, ...args) => { const ts = new Date().toISOString(); console.error(`[ERROR] ${ts} - ${msg}`, ...args); writeFileLog('error', ts, msg, args); addToLogBuffer('error', msg, args); },
   debug: (msg, ...args) => {
-    if (process.env.DEBUG) console.log(`[DEBUG] ${new Date().toISOString()} - ${msg}`, ...args);
+    const ts = new Date().toISOString();
+    if (process.env.DEBUG) { console.log(`[DEBUG] ${ts} - ${msg}`, ...args); writeFileLog('debug', ts, msg, args); }
     addToLogBuffer('debug', msg, args);
   }
 };
