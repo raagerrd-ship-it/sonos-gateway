@@ -522,8 +522,7 @@ function scheduleSonosTransitionRefresh(refreshCount) {
 // Fetch zone group info
 async function fetchZoneGroupInfo() {
   try {
-    const body = `<u:GetZoneGroupState xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"></u:GetZoneGroupState>`;
-    const xml = await soapRequest(body, 'GetZoneGroupState', '/ZoneGroupTopology/Control', 'ZoneGroupTopology');
+    const xml = await soapRequest(SOAP_GET_ZONE_GROUP, 'GetZoneGroupState', '/ZoneGroupTopology/Control', 'ZoneGroupTopology');
     const stateRaw = extractTag(xml, 'ZoneGroupState');
     if (!stateRaw) return { groupId: null, groupName: null };
     const state = decodeXmlEntities(stateRaw);
@@ -635,26 +634,16 @@ function renewSonosSubscription() {
 // Full status fetch and broadcast
 async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
   try {
-    const posBody = `<u:GetPositionInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetPositionInfo>`;
-    const transBody = `<u:GetTransportInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetTransportInfo>`;
-    const mediaBody = `<u:GetMediaInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetMediaInfo>`;
-    const volBody = `<u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>`;
-    const muteBody = `<u:GetMute xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetMute>`;
-    const bassBody = `<u:GetBass xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID></u:GetBass>`;
-    const trebleBody = `<u:GetTreble xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID></u:GetTreble>`;
-    const loudnessBody = `<u:GetLoudness xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetLoudness>`;
-    const crossfadeBody = `<u:GetCrossfadeMode xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetCrossfadeMode>`;
-    
     const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
-      soapRequest(posBody, 'GetPositionInfo'),
-      soapRequest(transBody, 'GetTransportInfo'),
-      soapRequest(mediaBody, 'GetMediaInfo'),
-      soapRequest(volBody, 'GetVolume', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-      soapRequest(muteBody, 'GetMute', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-      soapRequest(bassBody, 'GetBass', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-      soapRequest(trebleBody, 'GetTreble', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-      soapRequest(loudnessBody, 'GetLoudness', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-      soapRequest(crossfadeBody, 'GetCrossfadeMode').catch(() => null)
+      soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
+      soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
+      soapRequest(SOAP_GET_MEDIA, 'GetMediaInfo'),
+      soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
+      soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null),
+      soapRequest(SOAP_GET_BASS, 'GetBass', RC_PATH, RC_SERVICE).catch(() => null),
+      soapRequest(SOAP_GET_TREBLE, 'GetTreble', RC_PATH, RC_SERVICE).catch(() => null),
+      soapRequest(SOAP_GET_LOUDNESS, 'GetLoudness', RC_PATH, RC_SERVICE).catch(() => null),
+      soapRequest(SOAP_GET_CROSSFADE, 'GetCrossfadeMode').catch(() => null)
     ]);
     
     const parseIntTag = (xml, tag) => { if (!xml) return null; const v = extractTag(xml, tag); return v !== null ? parseInt(v, 10) : null; };
@@ -712,9 +701,13 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
           cachedPalette = palette;
           paletteExtractionInProgress = false;
           if (lastSonosEvent) {
+            // Mutate in place — avoids allocating a full payload spread
             lastSonosEvent.palette = palette;
-            broadcastSSE({ ...lastSonosEvent, palette, source: 'palette-update' });
-            cloudPush({ ...lastSonosEvent, palette });
+            const prevSource = lastSonosEvent.source;
+            lastSonosEvent.source = 'palette-update';
+            broadcastSSE(lastSonosEvent);
+            cloudPush(lastSonosEvent);
+            lastSonosEvent.source = prevSource;
           }
         })
         .catch(() => { paletteExtractionInProgress = false; });
@@ -728,8 +721,11 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
           log.info('🎨 [PALETTE] Next track palette pre-cached');
           if (lastSonosEvent) {
             lastSonosEvent.nextPalette = palette;
-            broadcastSSE({ ...lastSonosEvent, nextPalette: palette, source: 'next-palette-update' });
-            cloudPush({ ...lastSonosEvent, nextPalette: palette });
+            const prevSource = lastSonosEvent.source;
+            lastSonosEvent.source = 'next-palette-update';
+            broadcastSSE(lastSonosEvent);
+            cloudPush(lastSonosEvent);
+            lastSonosEvent.source = prevSource;
           }
         })
         .catch(() => {});
@@ -816,18 +812,38 @@ let cachedTreble = null;
 let cachedLoudness = null;
 let cachedCrossfade = null;
 
+// Reusable tick payload — mutated in place each second to avoid allocations
+const tickData = {
+  ok: true,
+  source: 'position-tick',
+  positionMillis: null,
+  durationMillis: null,
+  volume: null,
+  mute: null,
+  mediaType: 'track',
+  bass: null,
+  treble: null,
+  loudness: null,
+  crossfade: null,
+  trackName: null,
+  artistName: null,
+  albumName: null,
+  playbackState: 'PLAYBACK_STATE_PLAYING',
+  groupId: null,
+  groupName: null,
+};
+
 function startPositionBroadcast() {
   if (positionBroadcastTimer) return;
   positionBroadcastTimer = setInterval(async () => {
-    if (sonosEventClients.length === 0) return;
+    // Skip work entirely if nobody is listening (no SSE clients AND cloud push disabled)
+    const cloudActive = cloudConfig.enabled && cloudConfig.url && cloudConfig.secret;
+    if (sonosEventClients.length === 0 && !cloudActive) return;
     try {
-      const posBody = `<u:GetPositionInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetPositionInfo>`;
-      const volBody = `<u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>`;
-      const muteBody = `<u:GetMute xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetMute>`;
       const [posXml, volXml, muteXml] = await Promise.all([
-        soapRequest(posBody, 'GetPositionInfo'),
-        soapRequest(volBody, 'GetVolume', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-        soapRequest(muteBody, 'GetMute', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null)
+        soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
+        soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
+        soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null)
       ]);
       let volume = null;
       if (volXml) { const v = extractTag(volXml, 'CurrentVolume'); if (v !== null) volume = parseInt(v, 10); }
@@ -835,27 +851,26 @@ function startPositionBroadcast() {
       if (muteXml) { const v = extractTag(muteXml, 'CurrentMute'); if (v !== null) mute = v === '1'; }
       const relTime = extractTag(posXml, 'RelTime');
       const trackDuration = extractTag(posXml, 'TrackDuration');
-      const tickData = {
-        ok: true,
-        source: 'position-tick',
-        positionMillis: parseTime(relTime),
-        durationMillis: parseTime(trackDuration),
-        volume,
-        mute,
-        mediaType: cachedMediaType,
-        bass: cachedBass,
-        treble: cachedTreble,
-        loudness: cachedLoudness,
-        crossfade: cachedCrossfade,
-        trackName: lastSonosEvent?.trackName || null,
-        artistName: lastSonosEvent?.artistName || null,
-        albumName: lastSonosEvent?.albumName || null,
-        playbackState: lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING',
-        groupId: cachedGroupId,
-        groupName: cachedGroupName,
-      };
-      broadcastSSE(tickData);
-      cloudPush(tickData);
+
+      // Mutate the reusable tick object in place
+      tickData.positionMillis = parseTime(relTime);
+      tickData.durationMillis = parseTime(trackDuration);
+      tickData.volume = volume;
+      tickData.mute = mute;
+      tickData.mediaType = cachedMediaType;
+      tickData.bass = cachedBass;
+      tickData.treble = cachedTreble;
+      tickData.loudness = cachedLoudness;
+      tickData.crossfade = cachedCrossfade;
+      tickData.trackName = lastSonosEvent?.trackName || null;
+      tickData.artistName = lastSonosEvent?.artistName || null;
+      tickData.albumName = lastSonosEvent?.albumName || null;
+      tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING';
+      tickData.groupId = cachedGroupId;
+      tickData.groupName = cachedGroupName;
+
+      if (sonosEventClients.length > 0) broadcastSSE(tickData);
+      if (cloudActive) cloudPush(tickData);
     } catch { /* ignore */ }
   }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
