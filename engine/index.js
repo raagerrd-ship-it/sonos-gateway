@@ -105,6 +105,21 @@ const log = {
 
 // ============ Sonos UPnP Helpers ============
 
+// Pre-built SOAP bodies — hoisted to module scope so we don't allocate
+// new strings on every poll/event (these run once per second).
+const SOAP_GET_POSITION = `<u:GetPositionInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetPositionInfo>`;
+const SOAP_GET_TRANSPORT = `<u:GetTransportInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetTransportInfo>`;
+const SOAP_GET_MEDIA = `<u:GetMediaInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetMediaInfo>`;
+const SOAP_GET_VOLUME = `<u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>`;
+const SOAP_GET_MUTE = `<u:GetMute xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetMute>`;
+const SOAP_GET_BASS = `<u:GetBass xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID></u:GetBass>`;
+const SOAP_GET_TREBLE = `<u:GetTreble xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID></u:GetTreble>`;
+const SOAP_GET_LOUDNESS = `<u:GetLoudness xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetLoudness>`;
+const SOAP_GET_CROSSFADE = `<u:GetCrossfadeMode xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetCrossfadeMode>`;
+const SOAP_GET_ZONE_GROUP = `<u:GetZoneGroupState xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"></u:GetZoneGroupState>`;
+const RC_PATH = '/MediaRenderer/RenderingControl/Control';
+const RC_SERVICE = 'RenderingControl';
+
 function soapRequest(body, action, controlPath, serviceType) {
   controlPath = controlPath || '/MediaRenderer/AVTransport/Control';
   serviceType = serviceType || 'AVTransport';
