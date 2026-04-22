@@ -1228,10 +1228,11 @@ const server = http.createServer(async (req, res) => {
       
       // NOTIFY /api/upnp-callback
       if (req.method === 'NOTIFY' && pathname === '/api/upnp-callback') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
+        // Drain body without buffering — we only need the byte count for logging
+        let bytes = 0;
+        req.on('data', chunk => { bytes += chunk.length; });
         req.on('end', () => {
-          log.info(`📡 [SONOS] UPnP event received (${body.length} bytes)`);
+          log.info(`📡 [SONOS] UPnP event received (${bytes} bytes)`);
           res.writeHead(200);
           res.end();
           handleSonosUPnPEvent();
