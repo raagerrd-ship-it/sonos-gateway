@@ -8,8 +8,14 @@ const http = require('http');
 const https = require('https');
 const sharp = require('sharp');
 
-// LRU cache (max 20 entries)
-const CACHE_MAX = 20;
+// Memory: disable libvips internal pixel cache (~50MB) and limit threads.
+// Critical on Pi Zero 2 W where every MB counts.
+sharp.cache(false);
+sharp.concurrency(1);
+sharp.simd(true);
+
+// LRU cache — small footprint suits constrained RAM
+const CACHE_MAX = 8;
 const paletteCache = new Map();
 
 function cacheGet(key) {
