@@ -635,6 +635,27 @@ function renewSonosSubscription() {
 
 // Full status fetch and broadcast
 async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
+  // Coalesce concurrent triggers — Sonos can fire multiple NOTIFYs in quick
+  // succession (e.g. play+volume+queue), and running 9 SOAP calls in parallel
+  // for each one balloons RSS. Run once, remember if more arrived, then run again.
+  if (sonosUpnpHandlerBusy) {
+    sonosUpnpHandlerPending = true;
+    return;
+  }
+  sonosUpnpHandlerBusy = true;
+  try {
+    await _runSonosUPnPEvent({ source, refreshCount });
+  } finally {
+    sonosUpnpHandlerBusy = false;
+    if (sonosUpnpHandlerPending) {
+      sonosUpnpHandlerPending = false;
+      // Re-run once to capture the latest state
+      setImmediate(() => handleSonosUPnPEvent({ source: 'coalesced' }));
+    }
+  }
+}
+
+async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
   try {
     const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
       soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
