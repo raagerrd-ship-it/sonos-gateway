@@ -291,6 +291,8 @@ let cachedPalette = [];
 let cachedNextPalette = [];
 let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
+let sonosUpnpHandlerBusy = false;
+let sonosUpnpHandlerPending = false;
 const SONOS_IDLE_DEBOUNCE_MS = 2000;
 const SONOS_TRANSITION_REFRESH_MS = 700;
 const SONOS_TRANSITION_MAX_REFRESHES = 3;
@@ -633,6 +635,27 @@ function renewSonosSubscription() {
 
 // Full status fetch and broadcast
 async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
+  // Coalesce concurrent triggers — Sonos can fire multiple NOTIFYs in quick
+  // succession (e.g. play+volume+queue), and running 9 SOAP calls in parallel
+  // for each one balloons RSS. Run once, remember if more arrived, then run again.
+  if (sonosUpnpHandlerBusy) {
+    sonosUpnpHandlerPending = true;
+    return;
+  }
+  sonosUpnpHandlerBusy = true;
+  try {
+    await _runSonosUPnPEvent({ source, refreshCount });
+  } finally {
+    sonosUpnpHandlerBusy = false;
+    if (sonosUpnpHandlerPending) {
+      sonosUpnpHandlerPending = false;
+      // Re-run once to capture the latest state
+      setImmediate(() => handleSonosUPnPEvent({ source: 'coalesced' }));
+    }
+  }
+}
+
+async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
   try {
     const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
       soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
@@ -1303,6 +1326,18 @@ async function main() {
   subscribeSonosEvents();
   startPositionBroadcast();
   log.info(`📡 [SONOS] Position broadcast started`);
+
+  // Periodic GC to keep RSS low on Pi Zero 2 W (512MB total RAM).
+  // V8 holds onto old-space memory unless explicitly nudged; without this
+  // RSS slowly creeps up from ~35MB to 90MB+ even though heapUsed is small.
+  if (typeof global.gc === 'function') {
+    setInterval(() => {
+      try { global.gc(); } catch {}
+    }, 60000).unref();
+    log.info(`🧹 [GC] Periodic GC enabled (every 60s)`);
+  } else {
+    log.warn(`⚠️ [GC] --expose-gc not enabled, skipping periodic GC`);
+  }
   
   // Graceful shutdown (SIGTERM for systemd, SIGINT for dev)
   function shutdown(signal) {
