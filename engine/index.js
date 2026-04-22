@@ -1078,26 +1078,16 @@ const server = http.createServer(async (req, res) => {
       // GET /api/status
       if (req.method === 'GET' && pathname === '/api/status') {
         try {
-          const posBody = `<u:GetPositionInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetPositionInfo>`;
-          const transBody = `<u:GetTransportInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetTransportInfo>`;
-          const mediaBody = `<u:GetMediaInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetMediaInfo>`;
-          const volBody = `<u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>`;
-          const muteBody = `<u:GetMute xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetMute>`;
-          const bassBody = `<u:GetBass xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID></u:GetBass>`;
-          const trebleBody = `<u:GetTreble xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID></u:GetTreble>`;
-          const loudnessBody = `<u:GetLoudness xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetLoudness>`;
-          const crossfadeBody = `<u:GetCrossfadeMode xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetCrossfadeMode>`;
-          
           const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
-            soapRequest(posBody, 'GetPositionInfo'),
-            soapRequest(transBody, 'GetTransportInfo'),
-            soapRequest(mediaBody, 'GetMediaInfo'),
-            soapRequest(volBody, 'GetVolume', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-            soapRequest(muteBody, 'GetMute', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-            soapRequest(bassBody, 'GetBass', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-            soapRequest(trebleBody, 'GetTreble', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-            soapRequest(loudnessBody, 'GetLoudness', '/MediaRenderer/RenderingControl/Control', 'RenderingControl').catch(() => null),
-            soapRequest(crossfadeBody, 'GetCrossfadeMode').catch(() => null)
+            soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
+            soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
+            soapRequest(SOAP_GET_MEDIA, 'GetMediaInfo'),
+            soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
+            soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null),
+            soapRequest(SOAP_GET_BASS, 'GetBass', RC_PATH, RC_SERVICE).catch(() => null),
+            soapRequest(SOAP_GET_TREBLE, 'GetTreble', RC_PATH, RC_SERVICE).catch(() => null),
+            soapRequest(SOAP_GET_LOUDNESS, 'GetLoudness', RC_PATH, RC_SERVICE).catch(() => null),
+            soapRequest(SOAP_GET_CROSSFADE, 'GetCrossfadeMode').catch(() => null)
           ]);
           
           const parseIntTag = (xml, tag) => { if (!xml) return null; const v = extractTag(xml, tag); return v !== null ? parseInt(v, 10) : null; };
