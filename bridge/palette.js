@@ -130,9 +130,9 @@ function medianCut(pixels, depth) {
  * @returns {Promise<number[][]>} Array of 4 [r,g,b] arrays
  */
 async function extractPaletteFromBuffer(imageBuffer) {
-  // Scale down to ~30x30
-  const { data, info } = await sharp(imageBuffer)
-    .resize(30, 30, { fit: 'cover' })
+  // Scale down to ~20x20 — 400 pixels is plenty for 4 LED colors
+  const { data } = await sharp(imageBuffer)
+    .resize(20, 20, { fit: 'cover' })
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -238,8 +238,9 @@ async function extractPalette(albumArtUri, sonosIp, logger) {
       : albumArtUri;
 
     logger.info(`🎨 [PALETTE] Extracting from ${fullUrl.substring(0, 80)}...`);
-    const imageBuffer = await downloadImage(fullUrl, 3000);
+    let imageBuffer = await downloadImage(fullUrl, 3000);
     const palette = await extractPaletteFromBuffer(imageBuffer);
+    imageBuffer = null; // release ASAP for GC
     cacheSet(albumArtUri, palette);
     logger.info(`🎨 [PALETTE] Extracted: ${JSON.stringify(palette)}`);
     return palette;
