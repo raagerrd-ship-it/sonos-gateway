@@ -199,44 +199,46 @@ function ledOptimize(rgb) {
   return { rgb: hslToRgb(h, s, l), h, s, l };
 }
 
+// Module-static scratch buffers — reused across extractions (zero alloc in hot path).
+// Three "tiers" of pixel candidates filled in a single sweep:
+//   STRICT  : s >= 0.22 AND 0.05 <= l <= 0.95 (preferred)
+//   RELAXED : s >= 0.10                       (fallback if too few strict)
+//   ALL     : every pixel                      (final fallback)
+// Each entry is a byte-offset into `flat` (already multiplied by 3).
+const STRICT_IDX  = new Uint32Array(TARGET_PIXELS);
+const RELAXED_IDX = new Uint32Array(TARGET_PIXELS);
+const ALL_IDX     = new Uint32Array(TARGET_PIXELS);
+// Pre-fill ALL_IDX once — the byte-offsets are constant (0, 3, 6, ...).
+for (let k = 0; k < TARGET_PIXELS; k++) ALL_IDX[k] = k * 3;
+
 /**
  * Extract 4 dominant LED-optimized colors from the flat pixel buffer.
  */
 function extractPaletteFromFlat(flat) {
-  // Build filtered index array (Uint32Array — pre-sized, no growth alloc).
-  // Pass 1: strict filter (saturated, mid-light pixels).
-  const allIndices = new Uint32Array(TARGET_PIXELS);
-  for (let i = 0; i < TARGET_PIXELS; i++) allIndices[i] = i * 3;
-
-  let source;
-  // Pass 1: s>=0.22, 0.05<=l<=0.95
-  const strict = new Uint32Array(TARGET_PIXELS);
-  let sn = 0;
-  for (let k = 0; k < TARGET_PIXELS; k++) {
-    const i = allIndices[k];
+  // ── Single sweep: compute HSL once per pixel, bucket into candidate sets ──
+  let strictN = 0, relaxedN = 0;
+  for (let k = 0, i = 0; k < TARGET_PIXELS; k++, i += 3) {
     rgbToHslInto(flat[i], flat[i + 1], flat[i + 2], HSL_SCRATCH);
     const s = HSL_SCRATCH[1], l = HSL_SCRATCH[2];
-    if (s >= 0.22 && l >= 0.05 && l <= 0.95) strict[sn++] = i;
-  }
-
-  if (sn >= 16) {
-    source = strict.subarray(0, sn);
-  } else {
-    // Pass 2: relax to s>=0.10
-    const relaxed = new Uint32Array(TARGET_PIXELS);
-    let rn = 0;
-    for (let k = 0; k < TARGET_PIXELS; k++) {
-      const i = allIndices[k];
-      rgbToHslInto(flat[i], flat[i + 1], flat[i + 2], HSL_SCRATCH);
-      if (HSL_SCRATCH[1] >= 0.10) relaxed[rn++] = i;
+    if (s >= 0.10) {
+      RELAXED_IDX[relaxedN++] = i;
+      if (s >= 0.22 && l >= 0.05 && l <= 0.95) {
+        STRICT_IDX[strictN++] = i;
+      }
     }
-    source = rn >= 16 ? relaxed.subarray(0, rn) : allIndices;
   }
 
-  // Median-cut → up to 16 buckets. Copy needed because subarray sorts mutate parent.
-  const workIndices = new Uint32Array(source);
+  // Pick the best tier with enough samples for median-cut (need >= 16 for 4 buckets).
+  // subarray() returns a zero-copy view onto the scratch buffer.
+  let source;
+  if (strictN >= 16)        source = STRICT_IDX.subarray(0, strictN);
+  else if (relaxedN >= 16)  source = RELAXED_IDX.subarray(0, relaxedN);
+  else                      source = ALL_IDX;
+
+  // medianCutIdx sorts `source` in place. Safe: scratch buffers are overwritten
+  // from index 0 on the next call before being read again.
   const rawColors = [];
-  medianCutIdx(flat, workIndices, 4, rawColors);
+  medianCutIdx(flat, source, 4, rawColors);
 
   // LED optimize + sort by vibrancy
   const optimized = [];
