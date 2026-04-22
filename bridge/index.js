@@ -427,8 +427,8 @@ function doCloudPush(payload) {
         lastPushAt: new Date().toISOString(),
         statusCode: res.statusCode,
         ok: isOk,
-        error: isOk ? null : data.substring(0, 200),
-        responseBody: data.substring(0, 200),
+        error: isOk ? null : data.substring(0, 80),
+        responseBody: data.substring(0, 80),
       };
       if (isOk) {
         log.debug(`☁️ [CLOUD] Push OK (${res.statusCode}) ${data.substring(0, 100)}`);
