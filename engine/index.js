@@ -382,7 +382,8 @@ let cachedGroupId = null;
 let cachedGroupName = null;
 let cachedRawAlbumArtUri = null;
 let cachedRawNextAlbumArtUri = null;
-let cachedPalette = [];
+let cachedCurrentPalette = [];
+let cachedNextPalette = [];
 let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
 let sonosUpnpHandlerBusy = false;
@@ -503,7 +504,8 @@ function cloudPush(eventData) {
     protocolInfo: eventData.protocolInfo || null,
     groupId: eventData.groupId || null,
     groupName: eventData.groupName || null,
-    palette: eventData.palette || cachedPalette || [],
+    currentPalette: eventData.currentPalette || cachedCurrentPalette || [],
+    nextPalette: eventData.nextPalette || cachedNextPalette || [],
   };
 
   const now = Date.now();
@@ -814,11 +816,11 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
       paletteExtractionInProgress = true;
       extractPalette(cachedRawAlbumArtUri, SONOS_IP, log)
         .then(palette => {
-          cachedPalette = palette;
+          cachedCurrentPalette = palette;
           paletteExtractionInProgress = false;
           if (lastSonosEvent) {
             // Mutate in place — avoids allocating a full payload spread
-            lastSonosEvent.palette = palette;
+            lastSonosEvent.currentPalette = palette;
             const prevSource = lastSonosEvent.source;
             lastSonosEvent.source = 'palette-update';
             broadcastSSE(lastSonosEvent);
@@ -891,7 +893,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
       protocolInfo: didl ? didl.protocolInfo : null,
       groupId: cachedGroupId,
       groupName: cachedGroupName,
-      palette: cachedPalette,
+      currentPalette: cachedCurrentPalette,
       nextPalette: cachedNextPalette,
       timestamp: Date.now()
     };
@@ -1300,7 +1302,8 @@ const server = http.createServer(async (req, res) => {
             radioShowMd: didl ? didl.radioShowMd : null,
             originalTrackNumber: didl?.originalTrackNumber ? parseInt(didl.originalTrackNumber, 10) : null,
             protocolInfo: didl ? didl.protocolInfo : null,
-            palette: cachedPalette || []
+            currentPalette: cachedCurrentPalette || [],
+            nextPalette: cachedNextPalette || []
           });
         } catch (err) {
           log.error(`❌ Sonos status error: ${err.message}`);
