@@ -52,6 +52,10 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
+      # Ensure lifecycle scripts are executable in the release tarball
+      - name: Prepare PCC scripts
+        run: chmod +x scripts/*.sh
+
       # Package dist.tar.gz with Pi Control Center structure
       - name: Create tarball
         run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/ service.json
