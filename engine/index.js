@@ -100,19 +100,46 @@ function loadSonosConfig() {
   };
 }
 
-function saveSonosConfig(cfg) {
+function saveSonosConfig(cfg, options = {}) {
+  const { includeSettings = true, includeState = true } = options;
   const settings = {};
   const state = {};
   for (const [k, v] of Object.entries(cfg)) {
     if (v === undefined) continue;
     if (SETTINGS_KEYS.has(k)) settings[k] = v; else state[k] = v;
   }
-  let ok = true;
-  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); }
-  catch (e) { ok = false; log.error(`Settings save failed: ${e.message}`); }
-  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); }
-  catch (e) { ok = false; log.error(`State save failed: ${e.message}`); }
-  return ok;
+
+  const result = {
+    ok: true,
+    settingsSaved: !includeSettings,
+    stateSaved: !includeState,
+    settingsError: null,
+    stateError: null,
+  };
+
+  if (includeSettings) {
+    try {
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+      result.settingsSaved = true;
+    } catch (e) {
+      result.ok = false;
+      result.settingsError = e.message;
+      log.error(`Settings save failed: ${e.message}`);
+    }
+  }
+
+  if (includeState) {
+    try {
+      fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+      result.stateSaved = true;
+    } catch (e) {
+      result.ok = false;
+      result.stateError = e.message;
+      log.error(`State save failed: ${e.message}`);
+    }
+  }
+
+  return result;
 }
 
 let sonosConfig = loadSonosConfig();
