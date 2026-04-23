@@ -43,12 +43,16 @@ jobs:
         run: npm install --omit=dev --package-lock=false
 
       # Generate version.json with auto-incrementing semantic version
+      # Also stamp engine/package.json so PCC's "installed version" reading matches the release tag
       - name: Generate version.json
         id: version
         run: |
           MAJOR_MINOR=$(node -p "require('./engine/package.json').version.split('.').slice(0,2).join('.')")
           VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
           echo "{\"version\":\"${VERSION}\",\"commit\":\"${{ github.sha }}\",\"commitShort\":\"${GITHUB_SHA::7}\",\"branch\":\"main\"}" > engine/version.json
+          node -e "const fs=require('fs');const p='./engine/package.json';const j=JSON.parse(fs.readFileSync(p));j.version='${VERSION}';fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');"
+          # Stamp root package.json too, so any tooling that reads it also sees the release version
+          node -e "const fs=require('fs');const p='./package.json';if(fs.existsSync(p)){const j=JSON.parse(fs.readFileSync(p));j.version='${VERSION}';fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
