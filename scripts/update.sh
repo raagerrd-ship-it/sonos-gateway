@@ -6,6 +6,8 @@ set -e
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/sonos-buddy}"
 LOG_TAG="[SONOS-UPDATE]"
+ENGINE_VERSION_FILE="$INSTALL_DIR/engine/version.json"
+VERSION_FILE="$INSTALL_DIR/VERSION.json"
 
 echo "$LOG_TAG Starting update at $(date)"
 
@@ -24,6 +26,17 @@ npm install --production 2>&1 | grep -v "DBUS_SESSION_BUS_ADDRESS\|looking for f
 if [ -n "$LEGACY_BACKUP" ]; then
   echo "$LEGACY_BACKUP" > "$INSTALL_DIR/engine/config.json"
   echo "$LOG_TAG Restored legacy config.json (will be migrated to PCC_CONFIG_DIR/PCC_DATA_DIR on next start)"
+fi
+
+if [ -f "$ENGINE_VERSION_FILE" ]; then
+  INSTALLED_VERSION=$(node -e "const fs=require('fs'); const file=process.argv[1]; const data=JSON.parse(fs.readFileSync(file,'utf8')); if (!data.version) process.exit(1); process.stdout.write(String(data.version));" "$ENGINE_VERSION_FILE")
+  printf '{"tag":"v%s","version":"v%s","installedAt":"%s"}\n' \
+    "$INSTALLED_VERSION" \
+    "$INSTALLED_VERSION" \
+    "$(date -Iseconds)" > "$VERSION_FILE"
+  echo "$LOG_TAG Synced VERSION.json to v$INSTALLED_VERSION"
+else
+  echo "$LOG_TAG Warning: missing $ENGINE_VERSION_FILE; VERSION.json not updated"
 fi
 
 echo "$LOG_TAG Update complete"
