@@ -2,7 +2,16 @@ import { API_BASE } from '@/config';
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, options);
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = await res.clone().json();
+      detail = body?.error || body?.message || JSON.stringify(body);
+    } catch {
+      try { detail = await res.text(); } catch {}
+    }
+    throw new Error(`API error: ${res.status}${detail ? ` — ${detail}` : ''}`);
+  }
   return res.json();
 }
 

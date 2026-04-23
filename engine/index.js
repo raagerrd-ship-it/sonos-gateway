@@ -1368,8 +1368,9 @@ const server = http.createServer(async (req, res) => {
       
       sendJson(res, { error: 'Not Found' }, 404);
     } catch (error) {
-      log.error('API error:', error.message);
-      sendJson(res, { error: error.message }, 500);
+      log.error(`API error on ${req.method} ${pathname}: ${error.message}`);
+      log.error(`Stack: ${error.stack}`);
+      sendJson(res, { ok: false, error: error.message, stack: error.stack, route: `${req.method} ${pathname}` }, 500);
     }
     return;
   }
