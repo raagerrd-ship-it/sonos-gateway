@@ -162,17 +162,14 @@ export function NowPlaying({ data }: Props) {
         </div>
       </div>
 
-      {/* Palette */}
+      {/* Palette — råa färger från engine, ingen blandning */}
       {data?.palette && data.palette.length > 0 && (
         <div className="mt-3 flex gap-1.5">
           {data.palette.slice(0, 4).map((rgb, i) => (
             <div
               key={i}
               className="flex-1 h-6 rounded-md"
-              style={{
-                backgroundColor: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
-                border: theme ? `1px solid ${theme.border}` : undefined,
-              }}
+              style={{ backgroundColor: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }}
               title={`rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
             />
           ))}
