@@ -62,7 +62,7 @@ jobs:
 
       # Package dist.tar.gz with Pi Control Center structure
       - name: Create tarball
-        run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/ service.json
+        run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/ service.json package.json
 
       # Versioned release — PCC reads tag_name as the GitHub version
       - name: Create versioned release
