@@ -383,7 +383,6 @@ let cachedGroupName = null;
 let cachedRawAlbumArtUri = null;
 let cachedRawNextAlbumArtUri = null;
 let cachedPalette = [];
-let cachedNextPalette = [];
 let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
 let sonosUpnpHandlerBusy = false;
@@ -505,7 +504,6 @@ function cloudPush(eventData) {
     groupId: eventData.groupId || null,
     groupName: eventData.groupName || null,
     palette: eventData.palette || cachedPalette || [],
-    nextPalette: eventData.nextPalette || cachedNextPalette || [],
   };
 
   const now = Date.now();
