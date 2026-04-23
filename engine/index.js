@@ -1200,10 +1200,10 @@ const server = http.createServer(async (req, res) => {
         if (typeof body.url === 'string') cfg.cloudPushUrl = body.url.trim();
         if (typeof body.secret === 'string' && body.secret !== '••••••••' && body.secret.trim() !== '') cfg.cloudPushSecret = body.secret;
         if (typeof body.intervalMs === 'number' && body.intervalMs >= 100) cfg.cloudPushIntervalMs = body.intervalMs;
-        const saved = saveSonosConfig(cfg);
-        if (!saved) {
-          log.error(`☁️ [CLOUD] Failed to persist config to ${SETTINGS_FILE}`);
-          sendJson(res, { ok: false, error: `Could not write settings to ${SETTINGS_FILE}. Check write permissions for PCC_CONFIG_DIR.` }, 500);
+        const saved = saveSonosConfig(cfg, { includeSettings: true, includeState: false });
+        if (!saved.ok) {
+          log.error(`☁️ [CLOUD] Failed to persist config to ${SETTINGS_FILE}: ${saved.settingsError || 'unknown error'}`);
+          sendJson(res, { ok: false, error: `Could not write settings to ${SETTINGS_FILE}${saved.settingsError ? `: ${saved.settingsError}` : ''}. Check write permissions for PCC_CONFIG_DIR.` }, 500);
           return;
         }
         // Re-read to verify on-disk state actually matches what we wrote
