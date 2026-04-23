@@ -100,19 +100,46 @@ function loadSonosConfig() {
   };
 }
 
-function saveSonosConfig(cfg) {
+function saveSonosConfig(cfg, options = {}) {
+  const { includeSettings = true, includeState = true } = options;
   const settings = {};
   const state = {};
   for (const [k, v] of Object.entries(cfg)) {
     if (v === undefined) continue;
     if (SETTINGS_KEYS.has(k)) settings[k] = v; else state[k] = v;
   }
-  let ok = true;
-  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); }
-  catch (e) { ok = false; log.error(`Settings save failed: ${e.message}`); }
-  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); }
-  catch (e) { ok = false; log.error(`State save failed: ${e.message}`); }
-  return ok;
+
+  const result = {
+    ok: true,
+    settingsSaved: !includeSettings,
+    stateSaved: !includeState,
+    settingsError: null,
+    stateError: null,
+  };
+
+  if (includeSettings) {
+    try {
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+      result.settingsSaved = true;
+    } catch (e) {
+      result.ok = false;
+      result.settingsError = e.message;
+      log.error(`Settings save failed: ${e.message}`);
+    }
+  }
+
+  if (includeState) {
+    try {
+      fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+      result.stateSaved = true;
+    } catch (e) {
+      result.ok = false;
+      result.stateError = e.message;
+      log.error(`State save failed: ${e.message}`);
+    }
+  }
+
+  return result;
 }
 
 let sonosConfig = loadSonosConfig();
@@ -1173,10 +1200,10 @@ const server = http.createServer(async (req, res) => {
         if (typeof body.url === 'string') cfg.cloudPushUrl = body.url.trim();
         if (typeof body.secret === 'string' && body.secret !== '••••••••' && body.secret.trim() !== '') cfg.cloudPushSecret = body.secret;
         if (typeof body.intervalMs === 'number' && body.intervalMs >= 100) cfg.cloudPushIntervalMs = body.intervalMs;
-        const saved = saveSonosConfig(cfg);
-        if (!saved) {
-          log.error(`☁️ [CLOUD] Failed to persist config to ${SETTINGS_FILE}`);
-          sendJson(res, { ok: false, error: `Could not write settings to ${SETTINGS_FILE}. Check write permissions for PCC_CONFIG_DIR.` }, 500);
+        const saved = saveSonosConfig(cfg, { includeSettings: true, includeState: false });
+        if (!saved.ok) {
+          log.error(`☁️ [CLOUD] Failed to persist config to ${SETTINGS_FILE}: ${saved.settingsError || 'unknown error'}`);
+          sendJson(res, { ok: false, error: `Could not write settings to ${SETTINGS_FILE}${saved.settingsError ? `: ${saved.settingsError}` : ''}. Check write permissions for PCC_CONFIG_DIR.` }, 500);
           return;
         }
         // Re-read to verify on-disk state actually matches what we wrote
