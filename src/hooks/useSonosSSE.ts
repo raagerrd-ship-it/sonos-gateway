@@ -24,7 +24,7 @@ export interface SonosEvent {
   trackNumber?: number | null;
   nrTracks?: number | null;
   groupName?: string | null;
-  palette?: number[][] | null;
+  currentPalette?: number[][] | null;
   nextPalette?: number[][] | null;
   timestamp?: number;
 }
