@@ -77,7 +77,7 @@ export function NowPlaying({ data }: Props) {
       {/* Palette */}
       {data?.palette && data.palette.length > 0 && (
         <div className="mt-3 flex gap-1.5">
-          {data.palette.slice(0, 6).map((rgb, i) => (
+          {data.palette.slice(0, 4).map((rgb, i) => (
             <div
               key={i}
               className="flex-1 h-6 rounded-md border border-border/50"
