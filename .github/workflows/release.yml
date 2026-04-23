@@ -44,32 +44,49 @@ jobs:
 
       # Generate version.json with auto-incrementing semantic version
       - name: Generate version.json
+        id: version
         run: |
           MAJOR_MINOR=$(node -p "require('./engine/package.json').version.split('.').slice(0,2).join('.')")
           VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
           echo "{\"version\":\"${VERSION}\",\"commit\":\"${{ github.sha }}\",\"commitShort\":\"${GITHUB_SHA::7}\",\"branch\":\"main\"}" > engine/version.json
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       # Package dist.tar.gz with Pi Control Center structure
       - name: Create tarball
         run: tar czf dist.tar.gz --exclude='engine/node_modules/sharp' engine/ dist/ scripts/ service.json
 
-      - name: Delete existing 'latest' release
-        run: gh release delete latest --yes 2>/dev/null || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create release
+      # Versioned release — PCC reads tag_name as the GitHub version
+      - name: Create versioned release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest Build
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
           body: |
             Auto-built from ${{ github.sha }} at ${{ github.event.head_commit.timestamp }}
-            
+
             **Pi Control Center kompatibel** — innehåller:
             - `engine/` — Sonos UPnP motor (Node.js)
             - `dist/` — Statiskt UI (React)
             - `scripts/` — Install/update/uninstall
           files: dist.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Also keep a moving "latest" alias so older clients still work
+      - name: Delete existing 'latest' release
+        run: gh release delete latest --yes 2>/dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create 'latest' alias release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build (${{ steps.version.outputs.tag }})
+          body: |
+            Alias for ${{ steps.version.outputs.tag }}.
+          files: dist.tar.gz
+          make_latest: 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
