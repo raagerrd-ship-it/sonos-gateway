@@ -116,27 +116,12 @@ export function NowPlaying({ data }: Props) {
   const isPlaying = data?.playbackState === 'PLAYBACK_STATE_PLAYING';
   const isPaused = data?.playbackState === 'PLAYBACK_STATE_PAUSED';
 
-  const theme = useMemo(() => pickTheme(data?.palette), [data?.palette]);
-
-  const cardStyle = theme
-    ? {
-        background: `linear-gradient(135deg, ${theme.bg} 0%, ${theme.bg2} 100%)`,
-        borderColor: theme.border,
-        color: theme.fg,
-        transition: 'background 600ms ease, border-color 600ms ease, color 600ms ease',
-      }
-    : undefined;
+  const theme = null as ReturnType<typeof pickTheme>;
 
   return (
-    <div
-      className={theme ? 'border rounded-xl p-4' : 'bg-card border border-border rounded-xl p-4'}
-      style={cardStyle}
-    >
-      <div
-        className="text-[11px] uppercase tracking-wider font-medium mb-3"
-        style={theme ? { color: theme.mutedFg } : undefined}
-      >
-        <span className={theme ? '' : 'text-muted-foreground'}>Nu spelas</span>
+    <div className="bg-card border border-border rounded-xl p-4">
+      <div className="text-[11px] uppercase tracking-wider font-medium mb-3 text-muted-foreground">
+        Nu spelas
       </div>
 
       <div className="flex gap-3 items-center">
