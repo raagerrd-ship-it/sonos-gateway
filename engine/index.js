@@ -1171,12 +1171,27 @@ const server = http.createServer(async (req, res) => {
         const cfg = loadSonosConfig();
         if (typeof body.enabled === 'boolean') cfg.cloudPushEnabled = body.enabled;
         if (typeof body.url === 'string') cfg.cloudPushUrl = body.url.trim();
-        if (typeof body.secret === 'string' && body.secret !== '••••••••') cfg.cloudPushSecret = body.secret;
+        if (typeof body.secret === 'string' && body.secret !== '••••••••' && body.secret.trim() !== '') cfg.cloudPushSecret = body.secret;
         if (typeof body.intervalMs === 'number' && body.intervalMs >= 100) cfg.cloudPushIntervalMs = body.intervalMs;
-        saveSonosConfig(cfg);
+        const saved = saveSonosConfig(cfg);
+        if (!saved) {
+          log.error(`☁️ [CLOUD] Failed to persist config to ${SETTINGS_FILE}`);
+          sendJson(res, { ok: false, error: `Could not write settings to ${SETTINGS_FILE}. Check write permissions for PCC_CONFIG_DIR.` }, 500);
+          return;
+        }
+        // Re-read to verify on-disk state actually matches what we wrote
+        const verify = readJson(SETTINGS_FILE) || {};
         cloudConfig = loadCloudConfig();
-        log.info(`☁️ [CLOUD] Config updated: enabled=${cloudConfig.enabled}, url=${cloudConfig.url ? '✓' : '✗'}`);
-        sendJson(res, { ok: true, enabled: cloudConfig.enabled, url: cloudConfig.url, hasSecret: !!cloudConfig.secret, intervalMs: cloudConfig.intervalMs });
+        log.info(`☁️ [CLOUD] Config updated: enabled=${cloudConfig.enabled}, url=${cloudConfig.url ? '✓' : '✗'}, secret=${cloudConfig.secret ? '✓' : '✗'}, file=${SETTINGS_FILE}`);
+        log.info(`☁️ [CLOUD] On-disk verify: enabled=${verify.cloudPushEnabled}, url=${verify.cloudPushUrl ? '✓' : '✗'}, secret=${verify.cloudPushSecret ? '✓' : '✗'}`);
+        sendJson(res, {
+          ok: true,
+          enabled: cloudConfig.enabled,
+          url: cloudConfig.url,
+          hasSecret: !!cloudConfig.secret,
+          intervalMs: cloudConfig.intervalMs,
+          settingsFile: SETTINGS_FILE,
+        });
         return;
       }
       
