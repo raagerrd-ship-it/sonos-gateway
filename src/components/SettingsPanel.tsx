@@ -45,16 +45,27 @@ export function SettingsPanel() {
   const saveCloud = async () => {
     setSaving(true);
     try {
-      await sonosAPI.setCloudConfig({
+      const result: any = await sonosAPI.setCloudConfig({
         enabled: cloudEnabled,
         url: cloudUrl,
         secret: cloudSecret,
         intervalMs: cloudInterval,
       });
+      if (result && result.ok === false) {
+        toast.error(result.error || 'Engine kunde inte spara');
+        return;
+      }
+      // Re-fetch from engine to confirm what was actually persisted
+      const fresh = await sonosAPI.getCloudConfig();
+      setCloud(fresh);
+      setCloudEnabled(fresh.enabled);
+      setCloudUrl(fresh.url || '');
+      setCloudSecret(fresh.hasSecret ? '••••••••' : '');
+      setCloudInterval(fresh.intervalMs || 1000);
       setDirty(false);
       toast.success('Cloud-inställningar sparade');
-    } catch {
-      toast.error('Kunde inte spara');
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte spara');
     } finally {
       setSaving(false);
     }
