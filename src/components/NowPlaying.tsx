@@ -74,6 +74,20 @@ export function NowPlaying({ data }: Props) {
         </div>
       </div>
 
+      {/* Palette */}
+      {data?.palette && data.palette.length > 0 && (
+        <div className="mt-3 flex gap-1.5">
+          {data.palette.slice(0, 6).map((rgb, i) => (
+            <div
+              key={i}
+              className="flex-1 h-6 rounded-md border border-border/50"
+              style={{ backgroundColor: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }}
+              title={`rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Next track */}
       {data?.nextTrackName && (
         <div className="mt-3 pt-3 border-t border-border">
