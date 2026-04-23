@@ -157,7 +157,7 @@ function medianCutIdx(flat, indices, depth, results) {
       const i = indices[k];
       rSum += flat[i]; gSum += flat[i + 1]; bSum += flat[i + 2];
     }
-    results.push([Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)]);
+    results.push({ rgb: [Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)], count: n });
     return;
   }
 
@@ -187,16 +187,16 @@ function medianCutIdx(flat, indices, depth, results) {
   medianCutIdx(flat, indices.subarray(mid), depth - 1, results);
 }
 
-// LED-optimize one [r,g,b] → { rgb, h, s, l } (or null if too gray)
+// LED-optimize one [r,g,b] → { rgb, h, s, l, count } (or null if too gray)
 const HSL_SCRATCH = new Float32Array(3);
-function ledOptimize(rgb) {
+function ledOptimize(rgb, count) {
   rgbToHslInto(rgb[0], rgb[1], rgb[2], HSL_SCRATCH);
   let h = HSL_SCRATCH[0], s = HSL_SCRATCH[1], l = HSL_SCRATCH[2];
   if (s < 0.18) return null;
   s = Math.min(1, 0.45 + s * 0.75);
   l = 0.5 + l * 0.15;
   l = Math.max(0.5, Math.min(0.65, l));
-  return { rgb: hslToRgb(h, s, l), h, s, l };
+  return { rgb: hslToRgb(h, s, l), h, s, l, count };
 }
 
 // Module-static scratch buffers — reused across extractions (zero alloc in hot path).
@@ -240,17 +240,13 @@ function extractPaletteFromFlat(flat) {
   const rawColors = [];
   medianCutIdx(flat, source, 4, rawColors);
 
-  // LED optimize + sort by vibrancy
+  // LED optimize + sort by dominance (most pixels first)
   const optimized = [];
   for (let k = 0; k < rawColors.length; k++) {
-    const o = ledOptimize(rawColors[k]);
+    const o = ledOptimize(rawColors[k].rgb, rawColors[k].count);
     if (o) optimized.push(o);
   }
-  optimized.sort((a, b) => {
-    const va = a.s * (1 - Math.abs(a.l - 0.5) * 1.2);
-    const vb = b.s * (1 - Math.abs(b.l - 0.5) * 1.2);
-    return vb - va;
-  });
+  optimized.sort((a, b) => b.count - a.count);
 
   // Deduplicate similar hues
   const distinct = [];
