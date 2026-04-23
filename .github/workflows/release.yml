@@ -4,13 +4,16 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'engine/**'
       - 'src/**'
+      - 'scripts/**'
       - 'index.html'
       - 'package.json'
+      - 'service.json'
       - 'vite.config.ts'
       - 'tailwind.config.ts'
       - '.github/workflows/**'
