@@ -77,9 +77,9 @@ export function NowPlaying({ data }: Props) {
       </div>
 
       {/* Palette — råa färger direkt från engine, ingen blandning eller border */}
-      {data?.palette && data.palette.length > 0 && (
+      {data?.currentPalette && data.currentPalette.length > 0 && (
         <div className="mt-3 flex gap-1.5">
-          {data.palette.slice(0, 4).map((rgb, i) => (
+          {data.currentPalette.slice(0, 4).map((rgb, i) => (
             <div
               key={i}
               className="flex-1 h-6 rounded-md"
