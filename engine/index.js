@@ -811,24 +811,40 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
     cachedRawNextAlbumArtUri = (rawNextAlbumArtUri || cachedRawNextAlbumArtUri || '').replace(/&amp;/g, '&');
     
     // Extract palette on album art change (new track)
-    if (cachedRawAlbumArtUri && cachedRawAlbumArtUri !== previousRawAlbumArtUri && !paletteExtractionInProgress) {
+    if (cachedRawAlbumArtUri && cachedRawAlbumArtUri !== previousRawAlbumArtUri) {
+      // Promote pre-fetched next palette → current if it matches the new track,
+      // otherwise clear current immediately so we never leak the previous track's colors.
+      if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri === cachedRawAlbumArtUri && cachedNextPalette.length > 0) {
+        cachedCurrentPalette = cachedNextPalette;
+        log.info('🎨 [PALETTE] Promoted pre-fetched next → current');
+      } else {
+        cachedCurrentPalette = [];
+      }
       cachedNextPalette = [];
-      paletteExtractionInProgress = true;
-      extractPalette(cachedRawAlbumArtUri, SONOS_IP, log)
-        .then(palette => {
-          cachedCurrentPalette = palette;
-          paletteExtractionInProgress = false;
-          if (lastSonosEvent) {
-            // Mutate in place — avoids allocating a full payload spread
-            lastSonosEvent.currentPalette = palette;
-            const prevSource = lastSonosEvent.source;
-            lastSonosEvent.source = 'palette-update';
-            broadcastSSE(lastSonosEvent);
-            cloudPush(lastSonosEvent);
-            lastSonosEvent.source = prevSource;
-          }
-        })
-        .catch(() => { paletteExtractionInProgress = false; });
+
+      if (!paletteExtractionInProgress) {
+        const targetUri = cachedRawAlbumArtUri;
+        paletteExtractionInProgress = true;
+        extractPalette(targetUri, SONOS_IP, log)
+          .then(palette => {
+            paletteExtractionInProgress = false;
+            // Stale-check: if the track changed again while we were extracting, drop this result.
+            if (targetUri !== cachedRawAlbumArtUri) {
+              log.info('🎨 [PALETTE] Discarded stale extraction (track changed)');
+              return;
+            }
+            cachedCurrentPalette = palette;
+            if (lastSonosEvent) {
+              lastSonosEvent.currentPalette = palette;
+              const prevSource = lastSonosEvent.source;
+              lastSonosEvent.source = 'palette-update';
+              broadcastSSE(lastSonosEvent);
+              cloudPush(lastSonosEvent);
+              lastSonosEvent.source = prevSource;
+            }
+          })
+          .catch(() => { paletteExtractionInProgress = false; });
+      }
     }
     
     // Pre-fetch palette for next track
