@@ -468,11 +468,15 @@ function loadCloudConfig() {
 
 let cloudConfig = loadCloudConfig();
 let lastCloudPush = 0;
+let lastCloudPositionPush = 0;
 let cloudPushPending = false;
 let lastCloudPushData = null;
-let cloudPushStatus = { lastPushAt: null, statusCode: null, ok: null, error: null, responseBody: null };
+let cloudPushStatus = { lastPushAt: null, lastPushType: null, statusCode: null, ok: null, error: null, responseBody: null };
 
-function cloudPush(eventData) {
+// ── State push (full payload) ──
+// Skickas bara på state changes: track-byten, play/pause, volym/mute,
+// palette-uppdateringar, audio settings. Aldrig från position-tick.
+function cloudPushState(eventData) {
   if (!cloudConfig.enabled || !cloudConfig.url || !cloudConfig.secret) return;
 
   const payload = {
@@ -508,41 +512,50 @@ function cloudPush(eventData) {
     groupName: eventData.groupName || null,
     currentPalette: eventData.currentPalette || cachedCurrentPalette || [],
     nextPalette: eventData.nextPalette || cachedNextPalette || [],
+    source: eventData.source || null,
+  };
+
+  // State pushes har ingen rate-limit — de sker sällan ändå.
+  doCloudPush(cloudConfig.url, payload, 'state');
+}
+
+// ── Position push (minimal payload) ──
+// Skickas på position-ticks (typiskt var sekund). Bara position-data,
+// inget annat. Rate-limited av cloudConfig.intervalMs.
+function cloudPushPosition(positionData) {
+  if (!cloudConfig.enabled || !cloudConfig.positionUrl || !cloudConfig.secret) return;
+
+  const payload = {
+    positionMillis: positionData.positionMillis ?? null,
+    durationMillis: positionData.durationMillis ?? null,
+    playbackState: positionData.playbackState || null,
+    pushedAt: Date.now(),
   };
 
   const now = Date.now();
-  if (now - lastCloudPush < cloudConfig.intervalMs) {
-    lastCloudPushData = payload;
-    if (!cloudPushPending) {
-      cloudPushPending = true;
-      setTimeout(() => {
-        cloudPushPending = false;
-        if (lastCloudPushData) {
-          const p = lastCloudPushData;
-          lastCloudPushData = null;
-          doCloudPush(p);
-        }
-      }, cloudConfig.intervalMs - (now - lastCloudPush));
-    }
+  if (now - lastCloudPositionPush < cloudConfig.intervalMs) {
+    // Rate-limited: kasta — nästa tick (~sekund senare) skickar färskare data ändå.
     return;
   }
-  lastCloudPushData = null;
-  doCloudPush(payload);
+  lastCloudPositionPush = now;
+  doCloudPush(cloudConfig.positionUrl, payload, 'position');
 }
 
-function doCloudPush(payload) {
-  lastCloudPush = Date.now();
+// ── Generisk push-funktion ──
+function doCloudPush(url, payload, label) {
   const body = JSON.stringify(payload);
-  const url = new URL(cloudConfig.url);
-  const isHttps = url.protocol === 'https:';
+  const parsed = new URL(url);
+  const isHttps = parsed.protocol === 'https:';
+  const deviceId = (sonosConfig && sonosConfig.sonosUuid) || 'default';
   const options = {
-    hostname: url.hostname,
-    port: url.port || (isHttps ? 443 : 80),
-    path: url.pathname + url.search,
+    hostname: parsed.hostname,
+    port: parsed.port || (isHttps ? 443 : 80),
+    path: parsed.pathname + parsed.search,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-bridge-secret': cloudConfig.secret,
+      'x-device-id': deviceId,
       'Content-Length': Buffer.byteLength(body),
     },
     timeout: 10000,
@@ -555,33 +568,36 @@ function doCloudPush(payload) {
       const isOk = res.statusCode >= 200 && res.statusCode < 300;
       cloudPushStatus = {
         lastPushAt: new Date().toISOString(),
+        lastPushType: label,
         statusCode: res.statusCode,
         ok: isOk,
         error: isOk ? null : data.substring(0, 80),
         responseBody: data.substring(0, 80),
       };
       if (isOk) {
-        log.debug(`☁️ [CLOUD] Push OK (${res.statusCode}) ${data.substring(0, 100)}`);
+        log.debug(`☁️ [CLOUD-${label}] Push OK (${res.statusCode})`);
       } else {
-        log.warn(`☁️ [CLOUD] Push failed (${res.statusCode}): ${data.substring(0, 200)}`);
+        log.warn(`☁️ [CLOUD-${label}] Push failed (${res.statusCode}): ${data.substring(0, 200)}`);
       }
     });
   });
   req.on('error', (err) => {
-    cloudPushStatus = { lastPushAt: new Date().toISOString(), statusCode: null, ok: false, error: err.message, responseBody: null };
-    log.error(`☁️ [CLOUD] Push error: ${err.message}`);
+    cloudPushStatus = { lastPushAt: new Date().toISOString(), lastPushType: label, statusCode: null, ok: false, error: err.message, responseBody: null };
+    log.error(`☁️ [CLOUD-${label}] Push error: ${err.message}`);
   });
   req.on('timeout', () => {
     req.destroy();
-    cloudPushStatus = { lastPushAt: new Date().toISOString(), statusCode: null, ok: false, error: 'Timeout', responseBody: null };
-    log.warn('☁️ [CLOUD] Push timeout');
+    cloudPushStatus = { lastPushAt: new Date().toISOString(), lastPushType: label, statusCode: null, ok: false, error: 'Timeout', responseBody: null };
+    log.warn(`☁️ [CLOUD-${label}] Push timeout`);
   });
   req.write(body);
   req.end();
 }
 
-if (cloudConfig.enabled && cloudConfig.url) {
-  log.info(`☁️ [CLOUD] Push enabled → ${cloudConfig.url}`);
+if (cloudConfig.enabled) {
+  if (cloudConfig.url) log.info(`☁️ [CLOUD] State push → ${cloudConfig.url}`);
+  if (cloudConfig.positionUrl) log.info(`☁️ [CLOUD] Position push → ${cloudConfig.positionUrl}`);
+  if (!cloudConfig.url && !cloudConfig.positionUrl) log.info(`☁️ [CLOUD] Push enabled but no URLs configured`);
 } else {
   log.info(`☁️ [CLOUD] Push disabled`);
 }
