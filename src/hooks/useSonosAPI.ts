@@ -35,11 +35,13 @@ export interface CloudConfig {
   ok: boolean;
   enabled: boolean;
   url: string;
+  positionUrl?: string;
   secret: string;
   intervalMs: number;
   hasSecret: boolean;
   pushStatus: {
     lastPushAt: string | null;
+    lastPushType?: string | null;
     statusCode: number | null;
     ok: boolean | null;
     error: string | null;
@@ -80,7 +82,7 @@ export const sonosAPI = {
     }),
   discover: () => apiFetch<{ ok: boolean; devices: SonosDevice[]; currentUuid?: string; currentIp?: string }>('/api/discover'),
   getCloudConfig: () => apiFetch<CloudConfig>('/api/cloud-config'),
-  setCloudConfig: (data: { enabled?: boolean; url?: string; secret?: string; intervalMs?: number }) =>
+  setCloudConfig: (data: { enabled?: boolean; url?: string; positionUrl?: string; secret?: string; intervalMs?: number }) =>
     apiFetch<{ ok: boolean }>('/api/cloud-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
