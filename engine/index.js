@@ -605,7 +605,7 @@ if (cloudConfig.enabled) {
 function emitSonosEvent(eventData) {
   lastSonosEvent = eventData;
   broadcastSSE(eventData);
-  cloudPush(eventData);
+  cloudPushState(eventData);
 }
 
 function schedulePendingSonosIdle(eventData, meta) {
@@ -857,7 +857,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
               const prevSource = lastSonosEvent.source;
               lastSonosEvent.source = 'palette-update';
               broadcastSSE(lastSonosEvent);
-              cloudPush(lastSonosEvent);
+              cloudPushState(lastSonosEvent);
               lastSonosEvent.source = prevSource;
             }
           })
@@ -876,7 +876,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
             const prevSource = lastSonosEvent.source;
             lastSonosEvent.source = 'next-palette-update';
             broadcastSSE(lastSonosEvent);
-            cloudPush(lastSonosEvent);
+            cloudPushState(lastSonosEvent);
             lastSonosEvent.source = prevSource;
           }
         })
@@ -989,7 +989,7 @@ function startPositionBroadcast() {
   if (positionBroadcastTimer) return;
   positionBroadcastTimer = setInterval(async () => {
     // Skip work entirely if nobody is listening (no SSE clients AND cloud push disabled)
-    const cloudActive = cloudConfig.enabled && cloudConfig.url && cloudConfig.secret;
+    const cloudActive = cloudConfig.enabled && cloudConfig.positionUrl && cloudConfig.secret;
     if (sonosEventClients.length === 0 && !cloudActive) return;
     try {
       const [posXml, volXml, muteXml] = await Promise.all([
@@ -1022,7 +1022,7 @@ function startPositionBroadcast() {
       tickData.groupName = cachedGroupName;
 
       if (sonosEventClients.length > 0) broadcastSSE(tickData);
-      if (cloudActive) cloudPush(tickData);
+      if (cloudActive) cloudPushPosition(tickData);
     } catch {
       // SOAP failed (timeout/network) — still emit a heartbeat tick with last known
       // state so downstream consumers (Lotus stale-watchdog etc.) don't flip to PAUSED
@@ -1035,7 +1035,7 @@ function startPositionBroadcast() {
         tickData.groupId = cachedGroupId;
         tickData.groupName = cachedGroupName;
         if (sonosEventClients.length > 0) broadcastSSE(tickData);
-        if (cloudActive) cloudPush(tickData);
+        if (cloudActive) cloudPushPosition(tickData);
       } catch { /* ignore */ }
     }
   }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
@@ -1218,6 +1218,7 @@ const server = http.createServer(async (req, res) => {
           ok: true,
           enabled: cloudConfig.enabled,
           url: cloudConfig.url,
+          positionUrl: cloudConfig.positionUrl || '',
           secret: cloudConfig.secret ? '••••••••' : '',
           intervalMs: cloudConfig.intervalMs,
           hasSecret: !!cloudConfig.secret,
@@ -1232,6 +1233,7 @@ const server = http.createServer(async (req, res) => {
         const cfg = loadSonosConfig();
         if (typeof body.enabled === 'boolean') cfg.cloudPushEnabled = body.enabled;
         if (typeof body.url === 'string') cfg.cloudPushUrl = body.url.trim();
+        if (typeof body.positionUrl === 'string') cfg.cloudPushPositionUrl = body.positionUrl.trim();
         if (typeof body.secret === 'string' && body.secret !== '••••••••' && body.secret.trim() !== '') cfg.cloudPushSecret = body.secret;
         if (typeof body.intervalMs === 'number' && body.intervalMs >= 100) cfg.cloudPushIntervalMs = body.intervalMs;
         const saved = saveSonosConfig(cfg, { includeSettings: true, includeState: false });
@@ -1243,12 +1245,13 @@ const server = http.createServer(async (req, res) => {
         // Re-read to verify on-disk state actually matches what we wrote
         const verify = readJson(SETTINGS_FILE) || {};
         cloudConfig = loadCloudConfig();
-        log.info(`☁️ [CLOUD] Config updated: enabled=${cloudConfig.enabled}, url=${cloudConfig.url ? '✓' : '✗'}, secret=${cloudConfig.secret ? '✓' : '✗'}, file=${SETTINGS_FILE}`);
-        log.info(`☁️ [CLOUD] On-disk verify: enabled=${verify.cloudPushEnabled}, url=${verify.cloudPushUrl ? '✓' : '✗'}, secret=${verify.cloudPushSecret ? '✓' : '✗'}`);
+        log.info(`☁️ [CLOUD] Config updated: enabled=${cloudConfig.enabled}, url=${cloudConfig.url ? '✓' : '✗'}, positionUrl=${cloudConfig.positionUrl ? '✓' : '✗'}, secret=${cloudConfig.secret ? '✓' : '✗'}, file=${SETTINGS_FILE}`);
+        log.info(`☁️ [CLOUD] On-disk verify: enabled=${verify.cloudPushEnabled}, url=${verify.cloudPushUrl ? '✓' : '✗'}, positionUrl=${verify.cloudPushPositionUrl ? '✓' : '✗'}, secret=${verify.cloudPushSecret ? '✓' : '✗'}`);
         sendJson(res, {
           ok: true,
           enabled: cloudConfig.enabled,
           url: cloudConfig.url,
+          positionUrl: cloudConfig.positionUrl || '',
           hasSecret: !!cloudConfig.secret,
           intervalMs: cloudConfig.intervalMs,
           settingsFile: SETTINGS_FILE,
