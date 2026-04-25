@@ -146,47 +146,6 @@ function downsampleFlat(decoded) {
   return out;
 }
 
-// Median-cut on byte-indices into `flat` (each value is a multiple of 3).
-// `indices` is a Uint32Array; we sort and slice with subarray (no copy).
-function medianCutIdx(flat, indices, depth, results) {
-  if (depth === 0 || indices.length === 0) {
-    if (indices.length === 0) return;
-    let rSum = 0, gSum = 0, bSum = 0;
-    const n = indices.length;
-    for (let k = 0; k < n; k++) {
-      const i = indices[k];
-      rSum += flat[i]; gSum += flat[i + 1]; bSum += flat[i + 2];
-    }
-    results.push({ rgb: [Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)], count: n });
-    return;
-  }
-
-  // Range scan
-  let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
-  const n = indices.length;
-  for (let k = 0; k < n; k++) {
-    const i = indices[k];
-    const r = flat[i], g = flat[i + 1], b = flat[i + 2];
-    if (r < rMin) rMin = r; if (r > rMax) rMax = r;
-    if (g < gMin) gMin = g; if (g > gMax) gMax = g;
-    if (b < bMin) bMin = b; if (b > bMax) bMax = b;
-  }
-
-  const rRange = rMax - rMin, gRange = gMax - gMin, bRange = bMax - bMin;
-  let off;
-  if (rRange >= gRange && rRange >= bRange) off = 0;
-  else if (gRange >= bRange) off = 1;
-  else off = 2;
-
-  // In-place sort by chosen channel (typed-array sort — avoids closure allocations
-  // in V8 hot path; comparator still needed since we sort indices, not values)
-  indices.sort((a, b) => flat[a + off] - flat[b + off]);
-  const mid = n >> 1;
-  // subarray() = view, zero-copy
-  medianCutIdx(flat, indices.subarray(0, mid), depth - 1, results);
-  medianCutIdx(flat, indices.subarray(mid), depth - 1, results);
-}
-
 // LED-optimize one [r,g,b] → { rgb, h, s, l, count } (or null if too gray)
 const HSL_SCRATCH = new Float32Array(3);
 function ledOptimize(rgb, count) {
@@ -199,74 +158,129 @@ function ledOptimize(rgb, count) {
   return { rgb: hslToRgb(h, s, l), h, s, l, count };
 }
 
-// Module-static scratch buffers — reused across extractions (zero alloc in hot path).
-// Three "tiers" of pixel candidates filled in a single sweep:
-//   STRICT  : s >= 0.22 AND 0.05 <= l <= 0.95 (preferred)
-//   RELAXED : s >= 0.10                       (fallback if too few strict)
-//   ALL     : every pixel                      (final fallback)
-// Each entry is a byte-offset into `flat` (already multiplied by 3).
-const STRICT_IDX  = new Uint32Array(TARGET_PIXELS);
-const RELAXED_IDX = new Uint32Array(TARGET_PIXELS);
-const ALL_IDX     = new Uint32Array(TARGET_PIXELS);
-// Pre-fill ALL_IDX once — the byte-offsets are constant (0, 3, 6, ...).
-for (let k = 0; k < TARGET_PIXELS; k++) ALL_IDX[k] = k * 3;
+// Histogram-bucketing av hue (12 bucketar à 30°). Deterministiskt och
+// matchar mänsklig perception bättre än median-cut för "dominant färg".
+//
+// Algoritm:
+//   1. För varje pixel: konvertera RGB→HSL, skippa grå/svart/vitt
+//   2. Lägg pixeln i hue-bucket (0-11), vikta med saturation så att
+//      mättade färger dominerar över bleka
+//   3. Sortera bucketar efter vikt → största bucket = mest dominant hue
+//   4. För varje topp-bucket: ta medianpixeln som representant
+//   5. LED-optimera (saturation/luminans-justering för LED-output)
+//
+// Pi Zero 2 W: ~3-5ms per 400-pixels bild (TARGET=20).
+const HUE_BUCKETS = 12;
+const HUE_DELTA_MIN = 1;          // Min antal bucketar mellan distinkta färger (12 = 30° hue)
+const SAT_MIN = 0.15;             // Skippa pixlar under denna saturation (för grå)
+const L_MIN = 0.08, L_MAX = 0.92; // Skippa nästan-svart och nästan-vitt
+
+// Återanvändbar pre-allokerad scratch — undviker GC-tryck i hot path.
+// Pi Zero 2 W har bara 512 MB RAM och PCC budgeterar tjänster strikt.
+const BUCKET_WEIGHTS = new Float32Array(HUE_BUCKETS);
+const BUCKET_COUNTS = new Uint16Array(HUE_BUCKETS);
+// För varje bucket: lista över pixel-byte-offsets i `flat`. Pre-allokerad
+// till TARGET_PIXELS per bucket worst-case (om alla pixlar hamnar i samma).
+// 12 × 400 × 2 bytes = 9.6 KB total — försumbart.
+const BUCKET_INDICES = Array.from({ length: HUE_BUCKETS }, () => new Uint16Array(TARGET_PIXELS));
 
 /**
- * Extract 4 dominant LED-optimized colors from the flat pixel buffer.
+ * Extract dominant LED-optimized colors via hue histogram bucketing.
+ * Returnerar alltid 4 färger (med fallback om bilden är monokrom).
  */
 function extractPaletteFromFlat(flat) {
-  // ── Single sweep: compute HSL once per pixel, bucket into candidate sets ──
-  let strictN = 0, relaxedN = 0;
+  // Reset scratch buffers
+  BUCKET_WEIGHTS.fill(0);
+  BUCKET_COUNTS.fill(0);
+
+  // ── Sweep 1: bucketa pixlar per hue ──
   for (let k = 0, i = 0; k < TARGET_PIXELS; k++, i += 3) {
     rgbToHslInto(flat[i], flat[i + 1], flat[i + 2], HSL_SCRATCH);
-    const s = HSL_SCRATCH[1], l = HSL_SCRATCH[2];
-    if (s >= 0.10) {
-      RELAXED_IDX[relaxedN++] = i;
-      if (s >= 0.22 && l >= 0.05 && l <= 0.95) {
-        STRICT_IDX[strictN++] = i;
-      }
+    const h = HSL_SCRATCH[0], s = HSL_SCRATCH[1], l = HSL_SCRATCH[2];
+
+    // Filter: skippa grått, svart, vitt
+    if (s < SAT_MIN || l < L_MIN || l > L_MAX) continue;
+
+    // Hue 0..1 → bucket 0..11. Math.min skyddar mot h===1.0 edge case.
+    let bucket = (h * HUE_BUCKETS) | 0;
+    if (bucket >= HUE_BUCKETS) bucket = HUE_BUCKETS - 1;
+
+    // Vikta med saturation: mättnadsröd > blekrosa även om count är samma
+    BUCKET_WEIGHTS[bucket] += s;
+    const cnt = BUCKET_COUNTS[bucket];
+    if (cnt < TARGET_PIXELS) {
+      BUCKET_INDICES[bucket][cnt] = i;
+      BUCKET_COUNTS[bucket] = cnt + 1;
     }
   }
 
-  // Pick the best tier with enough samples for median-cut (need >= 16 for 4 buckets).
-  // subarray() returns a zero-copy view onto the scratch buffer.
-  let source;
-  if (strictN >= 16)        source = STRICT_IDX.subarray(0, strictN);
-  else if (relaxedN >= 16)  source = RELAXED_IDX.subarray(0, relaxedN);
-  else                      source = ALL_IDX;
-
-  // medianCutIdx sorts `source` in place. Safe: scratch buffers are overwritten
-  // from index 0 on the next call before being read again.
-  const rawColors = [];
-  medianCutIdx(flat, source, 4, rawColors);
-
-  // LED optimize + sort by dominance (most pixels first)
-  const optimized = [];
-  for (let k = 0; k < rawColors.length; k++) {
-    const o = ledOptimize(rawColors[k].rgb, rawColors[k].count);
-    if (o) optimized.push(o);
+  // ── Rangordna bucketar efter total vikt ──
+  // Bara 12 bucketar — insertion sort räcker, ingen anledning till .sort()-overhead.
+  const ranking = [];
+  for (let b = 0; b < HUE_BUCKETS; b++) {
+    if (BUCKET_WEIGHTS[b] > 0) ranking.push(b);
   }
-  optimized.sort((a, b) => b.count - a.count);
+  ranking.sort((a, b) => BUCKET_WEIGHTS[b] - BUCKET_WEIGHTS[a]);
 
-  // Deduplicate similar hues
-  const distinct = [];
-  for (let k = 0; k < optimized.length && distinct.length < 4; k++) {
-    const c = optimized[k];
+  // ── Plocka representativ färg per topp-bucket ──
+  const result = [];
+  const usedBuckets = [];
+
+  for (let r = 0; r < ranking.length && result.length < 4; r++) {
+    const bucket = ranking[r];
+
+    // Skippa bucketar för nära redan vald (i hue-cirkel-avstånd)
     let tooClose = false;
-    for (let m = 0; m < distinct.length; m++) {
-      let dh = Math.abs(distinct[m].h - c.h);
-      if (dh > 0.5) dh = 1 - dh;
-      if (dh < 0.05) { tooClose = true; break; }
+    for (let u = 0; u < usedBuckets.length; u++) {
+      let delta = Math.abs(usedBuckets[u] - bucket);
+      if (delta > HUE_BUCKETS / 2) delta = HUE_BUCKETS - delta;
+      if (delta < HUE_DELTA_MIN) { tooClose = true; break; }
     }
-    if (!tooClose) distinct.push(c);
+    if (tooClose) continue;
+
+    // Median-pixel som representant: sortera bucket-pixlarna efter
+    // RGB-summa (luminans-proxy) och ta mitten. Det undviker outliers.
+    const count = BUCKET_COUNTS[bucket];
+    const indices = BUCKET_INDICES[bucket];
+    // Bygg en liten array med (rgbSum, byteOffset)-par. count är typiskt
+    // 5-100 så sort-overhead är försumbar (vi gör detta max 4 ggr per bild).
+    const sums = new Array(count);
+    for (let k = 0; k < count; k++) {
+      const i = indices[k];
+      sums[k] = { i, sum: flat[i] + flat[i + 1] + flat[i + 2] };
+    }
+    sums.sort((a, b) => a.sum - b.sum);
+    const midI = sums[count >> 1].i;
+    const rgb = [flat[midI], flat[midI + 1], flat[midI + 2]];
+
+    const optimized = ledOptimize(rgb, BUCKET_WEIGHTS[bucket]);
+    if (optimized) {
+      result.push(optimized.rgb);
+      usedBuckets.push(bucket);
+    }
   }
 
-  const result = distinct.map(c => c.rgb);
-  while (result.length < 4) {
-    if (optimized.length > result.length) result.push(optimized[result.length].rgb);
-    else result.push([255, 80, 80]);
+  // ── Fallback om vi har <4 färger ──
+  // Händer för t.ex. svartvita foton, monokroma omslag, eller bilder med
+  // bara en stark hue. Komplettera med relaxerade krav innan vi ger upp.
+  if (result.length < 4) {
+    for (let r = 0; r < ranking.length && result.length < 4; r++) {
+      const bucket = ranking[r];
+      if (usedBuckets.indexOf(bucket) !== -1) continue;
+
+      const count = BUCKET_COUNTS[bucket];
+      const indices = BUCKET_INDICES[bucket];
+      const midI = indices[count >> 1];
+      // Hoppa över ledOptimize-filtret (s<0.18) — vi behöver fylla på.
+      result.push([flat[midI], flat[midI + 1], flat[midI + 2]]);
+      usedBuckets.push(bucket);
+    }
   }
-  return result.slice(0, 4);
+
+  // Sista fallback: om bilden är helt grå
+  while (result.length < 4) result.push([255, 80, 80]);
+
+  return result;
 }
 
 /**
