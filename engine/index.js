@@ -63,7 +63,7 @@ const PORT = ENGINE_PORT;
 // Settings keys live in PCC_CONFIG_DIR; everything else is state in PCC_DATA_DIR.
 const SETTINGS_KEYS = new Set([
   'sonosIp', 'sonosName', 'sonosUuid', 'debugLogging',
-  'cloudPushEnabled', 'cloudPushUrl', 'cloudPushSecret', 'cloudPushIntervalMs'
+  'cloudPushEnabled', 'cloudPushUrl', 'cloudPushPositionUrl', 'cloudPushSecret', 'cloudPushIntervalMs'
 ]);
 
 function readJson(file) {
@@ -94,6 +94,7 @@ function loadSonosConfig() {
     debugLogging: !!settings.debugLogging,
     cloudPushEnabled: settings.cloudPushEnabled,
     cloudPushUrl: settings.cloudPushUrl,
+    cloudPushPositionUrl: settings.cloudPushPositionUrl,
     cloudPushSecret: settings.cloudPushSecret,
     cloudPushIntervalMs: settings.cloudPushIntervalMs,
     knownDevices: Array.isArray(state.knownDevices) ? state.knownDevices : []
@@ -459,7 +460,8 @@ function loadCloudConfig() {
   return {
     enabled: cfg.cloudPushEnabled ?? (!!process.env.CLOUD_PUSH_URL),
     url: cfg.cloudPushUrl || process.env.CLOUD_PUSH_URL || '',
-    secret: cfg.cloudPushSecret || process.env.CLOUD_PUSH_SECRET || '',
+    positionUrl: cfg.cloudPushPositionUrl || process.env.CLOUD_PUSH_POSITION_URL || '',
+    secret: cfg.cloudPushSecret || process.env.CLOUD_PUSH_SECRET || 'Fasanvagen',
     intervalMs: cfg.cloudPushIntervalMs || parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000'),
   };
 }
