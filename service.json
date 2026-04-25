@@ -5,7 +5,7 @@
   "releaseUrl": "https://api.github.com/repos/raagerrd-ship-it/sonos-gateway/releases/latest",
   "installDir": "/opt/sonos-buddy",
   "installScript": "scripts/install.sh",
-  "runInstallOnRelease": true,
+  "runInstallOnRelease": false,
   "updateScript": "/opt/sonos-buddy/scripts/update.sh",
   "uninstallScript": "scripts/uninstall.sh",
   "permissions": ["network", "multicast"],
