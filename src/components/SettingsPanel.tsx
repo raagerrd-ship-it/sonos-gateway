@@ -17,6 +17,7 @@ export function SettingsPanel() {
   // Local form state
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [cloudUrl, setCloudUrl] = useState('');
+  const [cloudPositionUrl, setCloudPositionUrl] = useState('');
   const [cloudSecret, setCloudSecret] = useState('');
   const [cloudInterval, setCloudInterval] = useState(1000);
 
@@ -26,7 +27,8 @@ export function SettingsPanel() {
       setCloud(c);
       setCloudEnabled(c.enabled);
       setCloudUrl(c.url || '');
-      setCloudSecret(c.hasSecret ? '••••••••' : '');
+      setCloudPositionUrl(c.positionUrl || '');
+      setCloudSecret(c.hasSecret ? '••••••••' : 'Fasanvagen');
       setCloudInterval(c.intervalMs || 1000);
       setDirty(false);
     }).catch(() => {});
@@ -48,6 +50,7 @@ export function SettingsPanel() {
       const result: any = await sonosAPI.setCloudConfig({
         enabled: cloudEnabled,
         url: cloudUrl,
+        positionUrl: cloudPositionUrl,
         secret: cloudSecret,
         intervalMs: cloudInterval,
       });
@@ -60,7 +63,8 @@ export function SettingsPanel() {
       setCloud(fresh);
       setCloudEnabled(fresh.enabled);
       setCloudUrl(fresh.url || '');
-      setCloudSecret(fresh.hasSecret ? '••••••••' : '');
+      setCloudPositionUrl(fresh.positionUrl || '');
+      setCloudSecret(fresh.hasSecret ? '••••••••' : 'Fasanvagen');
       setCloudInterval(fresh.intervalMs || 1000);
       setDirty(false);
       toast.success('Cloud-inställningar sparade');
@@ -116,13 +120,28 @@ export function SettingsPanel() {
 
             <div className="space-y-3">
               <div>
-                <Label className="text-xs">Edge Function URL</Label>
+                <Label className="text-xs">Cloud Push URL (state)</Label>
                 <Input
                   value={cloudUrl}
                   onChange={(e) => { setCloudUrl(e.target.value); setDirty(true); }}
-                  placeholder="https://xxx.supabase.co/functions/v1/..."
+                  placeholder="https://xxx.supabase.co/functions/v1/sonos-state"
                   className="mt-1 font-mono text-xs"
                 />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Full payload: track-byten, palette, volym, audio-settings.
+                </p>
+              </div>
+              <div>
+                <Label className="text-xs">Cloud Push URL (position)</Label>
+                <Input
+                  value={cloudPositionUrl}
+                  onChange={(e) => { setCloudPositionUrl(e.target.value); setDirty(true); }}
+                  placeholder="https://xxx.supabase.co/functions/v1/sonos-position"
+                  className="mt-1 font-mono text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Optional. Lättviktig position-uppdatering (~5 fält) varje sekund. Lämna tomt för att stänga av.
+                </p>
               </div>
               <div>
                 <Label className="text-xs">Bridge Secret</Label>
