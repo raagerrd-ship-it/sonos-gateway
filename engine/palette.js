@@ -330,7 +330,9 @@ function extractPaletteFromFlat(flat) {
   // 4. Sortera efter dominans
   clusters.sort((x, y) => y.score - x.score);
 
-  // 5. LED-optimera + filtrera grå
+  // ── 5. LED-optimera + filtrera grå/mörka kluster ──
+  // Bara kluster som passerar ledOptimizeLab-filtret räknas som "riktiga" färger.
+  // Kluster som returnerar null har för låg kromaticitet för att synas på LED.
   const result = [];
   for (let c = 0; c < clusters.length && result.length < 4; c++) {
     const cl = clusters[c];
@@ -338,24 +340,24 @@ function extractPaletteFromFlat(flat) {
     if (optimized) result.push(optimized);
   }
 
-  // 6. Fallback för bilder med få mättade färger
-  if (result.length < 4) {
-    for (let c = 0; c < clusters.length && result.length < 4; c++) {
-      const cl = clusters[c];
-      labToRgb(cl.L, cl.a, cl.b, RGB_SCRATCH);
-      const rgb = [RGB_SCRATCH[0], RGB_SCRATCH[1], RGB_SCRATCH[2]];
-      let isDup = false;
-      for (let r = 0; r < result.length; r++) {
-        if (result[r][0] === rgb[0] && result[r][1] === rgb[1] && result[r][2] === rgb[2]) {
-          isDup = true;
-          break;
-        }
-      }
-      if (!isDup) result.push(rgb);
-    }
+  // ── 6. Fyll ut till 4 färger ──
+  // Hellre upprepa huvudfärgen än att fylla med grumliga/mörka kluster.
+  // Det ger:
+  //   - Visuell konsistens (alla 4 platser har en riktig färg från bilden)
+  //   - LED:n lyser med rätt mättnad i stället för att bli halvt släckt
+  //   - Användaren ser tydligt att låten "är" en viss färg
+  //
+  // Om k-means inte hittade någon LED-användbar färg alls (helt monokrom
+  // bild som albumcovers med bara svartvitt), använd standardfallback.
+  if (result.length === 0) {
+    return [[255, 80, 80], [255, 80, 80], [255, 80, 80], [255, 80, 80]];
   }
 
-  while (result.length < 4) result.push([255, 80, 80]);
+  // Upprepa huvudfärgen (result[0]) för platser vi inte lyckades fylla.
+  const primary = result[0];
+  while (result.length < 4) {
+    result.push([primary[0], primary[1], primary[2]]);
+  }
 
   return result;
 }
