@@ -280,7 +280,13 @@ function kmeansIterate(numPixels) {
 const CHROMA_MIN = 8;
 const L_TARGET_MIN = 50;
 const L_TARGET_MAX = 65;
-const CHROMA_BOOST = 1.4;
+// Över-mättning för BLEDOM-kompensation:
+// Lampan dimmer RGB linjärt, vilket tappar perceptuell mättnad vid lägre
+// ljusstyrka (pastell blir nästan vit-grått). Genom att skicka över-mättade
+// färger från start får vi perceptuellt korrekt mättnad efter dimning.
+// labToRgb clamp:ar till 0-255 så extra-boost utanför sRGB-gamut klipps
+// naturligt till mättad ren-färg på den dominerande kanalen.
+const CHROMA_BOOST = 2.2;
 
 function ledOptimizeLab(L, a, b) {
   const chroma = Math.sqrt(a * a + b * b);
