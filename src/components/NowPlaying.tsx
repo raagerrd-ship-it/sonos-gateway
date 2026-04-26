@@ -106,7 +106,7 @@ export function NowPlaying({ data }: Props) {
             ) : (
               <ArtPlaceholder size={40} />
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold truncate text-foreground/80">
                 {data.nextTrackName}
               </div>
@@ -115,6 +115,20 @@ export function NowPlaying({ data }: Props) {
               </div>
             </div>
           </div>
+
+          {/* Palette för nästa låt — pre-cachad av engine */}
+          {data?.nextPalette && data.nextPalette.length > 0 && (
+            <div className="mt-2.5 flex gap-1.5">
+              {data.nextPalette.slice(0, 4).map((rgb, i) => (
+                <div
+                  key={i}
+                  className="flex-1 h-4 rounded"
+                  style={{ backgroundColor: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }}
+                  title={`rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
