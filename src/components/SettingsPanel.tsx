@@ -19,7 +19,7 @@ export function SettingsPanel() {
   const [cloudUrl, setCloudUrl] = useState('');
   const [cloudPositionUrl, setCloudPositionUrl] = useState('');
   const [cloudSecret, setCloudSecret] = useState('');
-  const [cloudInterval, setCloudInterval] = useState(1000);
+  const [cloudInterval, setCloudInterval] = useState(3000);
 
   useEffect(() => {
     if (!open) return;
@@ -29,7 +29,7 @@ export function SettingsPanel() {
       setCloudUrl(c.url || '');
       setCloudPositionUrl(c.positionUrl || '');
       setCloudSecret(c.hasSecret ? '••••••••' : 'Fasanvagen');
-      setCloudInterval(c.intervalMs || 1000);
+      setCloudInterval(c.intervalMs || 3000);
       setDirty(false);
     }).catch(() => {});
     sonosAPI.getDebug().then((d) => setDebugEnabled(d.enabled)).catch(() => {});
@@ -65,7 +65,7 @@ export function SettingsPanel() {
       setCloudUrl(fresh.url || '');
       setCloudPositionUrl(fresh.positionUrl || '');
       setCloudSecret(fresh.hasSecret ? '••••••••' : 'Fasanvagen');
-      setCloudInterval(fresh.intervalMs || 1000);
+      setCloudInterval(fresh.intervalMs || 3000);
       setDirty(false);
       toast.success('Cloud-inställningar sparade');
     } catch (e: any) {
@@ -160,7 +160,7 @@ export function SettingsPanel() {
                   min={100}
                   step={100}
                   value={cloudInterval}
-                  onChange={(e) => { setCloudInterval(parseInt(e.target.value) || 1000); setDirty(true); }}
+                  onChange={(e) => { setCloudInterval(parseInt(e.target.value) || 3000); setDirty(true); }}
                   className="mt-1 font-mono text-xs"
                 />
               </div>
