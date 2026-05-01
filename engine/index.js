@@ -462,7 +462,7 @@ function loadCloudConfig() {
     url: cfg.cloudPushUrl || process.env.CLOUD_PUSH_URL || '',
     positionUrl: cfg.cloudPushPositionUrl || process.env.CLOUD_PUSH_POSITION_URL || '',
     secret: cfg.cloudPushSecret || process.env.CLOUD_PUSH_SECRET || 'Fasanvagen',
-    intervalMs: cfg.cloudPushIntervalMs || parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '1000'),
+    intervalMs: cfg.cloudPushIntervalMs || parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '3000'),
   };
 }
 
