@@ -4,7 +4,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const os = require('os');
-const { discoverSonos } = require('./discover');
+const { discoverSonos, discoverRooms, fetchZoneTopology } = require('./discover');
 const { extractPalette } = require('./palette');
 
 // Version — prefer version.json (CI-generated), fallback to package.json
