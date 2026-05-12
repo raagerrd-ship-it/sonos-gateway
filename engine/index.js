@@ -667,6 +667,37 @@ function getNetworkIP() {
   return 'localhost';
 }
 
+// Re-resolve the coordinator IP for the saved room when subscription
+// keeps failing — covers the case where the speaker got a new DHCP lease
+// or the room's coordinator role moved to a different speaker.
+let lastReresolveAt = 0;
+async function reresolveCoordinator() {
+  if (Date.now() - lastReresolveAt < 30000) return;
+  lastReresolveAt = Date.now();
+  if (!sonosConfig.sonosName && !sonosConfig.sonosUuid) return;
+  log.info(`🔍 [SSDP] Re-resolving coordinator for "${sonosConfig.sonosName || sonosConfig.sonosUuid}"...`);
+  try {
+    const { rooms, devices } = await discoverRooms(4000);
+    const list = rooms.length ? rooms : devices;
+    sonosConfig.knownDevices = list;
+    let match = sonosConfig.sonosName ? rooms.find(r => r.name === sonosConfig.sonosName) : null;
+    if (!match && sonosConfig.sonosUuid) {
+      match = rooms.find(r => r.uuid === sonosConfig.sonosUuid)
+           || devices.find(d => d.uuid === sonosConfig.sonosUuid);
+    }
+    if (match && match.ip && match.ip !== SONOS_IP) {
+      log.info(`🔄 [SSDP] Coordinator moved: ${SONOS_IP} → ${match.ip} (${match.name})`);
+      SONOS_IP = match.ip;
+      sonosConfig.sonosIp = match.ip;
+      sonosConfig.sonosName = match.name || sonosConfig.sonosName;
+      sonosConfig.sonosUuid = match.uuid || sonosConfig.sonosUuid;
+    }
+    saveSonosConfig(sonosConfig);
+  } catch (e) {
+    log.warn(`⚠️ [SSDP] Re-resolve failed: ${e.message}`);
+  }
+}
+
 // Subscribe to Sonos AVTransport events
 function subscribeSonosEvents() {
   const networkIP = getNetworkIP();
