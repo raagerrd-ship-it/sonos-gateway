@@ -130,4 +130,108 @@ function discoverSonos(timeoutMs = 5000) {
   });
 }
 
-module.exports = { discoverSonos, fetchDeviceDescription };
+/**
+ * Fetch ZoneGroupState from any speaker — every Sonos device knows the
+ * full topology. Returns an array of rooms keyed by coordinator:
+ *   [{ roomName, coordinatorUuid, coordinatorIp, members: [{uuid, ip, name}] }]
+ */
+function fetchZoneTopology(ip, port = 1400) {
+  return new Promise((resolve, reject) => {
+    const body = `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetZoneGroupState xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"></u:GetZoneGroupState></s:Body></s:Envelope>`;
+    const req = http.request({
+      hostname: ip, port, path: '/ZoneGroupTopology/Control', method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset="utf-8"',
+        'SOAPAction': '"urn:schemas-upnp-org:service:ZoneGroupTopology:1#GetZoneGroupState"',
+        'Content-Length': Buffer.byteLength(body)
+      },
+      timeout: 4000
+    }, (res) => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        try {
+          const stateMatch = data.match(/<ZoneGroupState>([\s\S]*?)<\/ZoneGroupState>/);
+          if (!stateMatch) return resolve([]);
+          const state = stateMatch[1]
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+          const groupRe = /<ZoneGroup\s+([^>]*)>([\s\S]*?)<\/ZoneGroup>/g;
+          const rooms = [];
+          let gm;
+          while ((gm = groupRe.exec(state)) !== null) {
+            const attrs = gm[1];
+            const inner = gm[2];
+            const coordAttr = attrs.match(/Coordinator="([^"]+)"/);
+            if (!coordAttr) continue;
+            const coordinatorUuid = coordAttr[1];
+            const memberRe = /<ZoneGroupMember\s+([^/]*)\/?>/g;
+            let mm;
+            const members = [];
+            let coordinator = null;
+            while ((mm = memberRe.exec(inner)) !== null) {
+              const a = mm[1];
+              const uuid = (a.match(/UUID="([^"]+)"/) || [])[1];
+              const name = (a.match(/ZoneName="([^"]+)"/) || [])[1];
+              const loc = (a.match(/Location="([^"]+)"/) || [])[1];
+              const invisible = /Invisible="1"/.test(a);
+              const ipMatch = loc && loc.match(/^https?:\/\/([^:/]+)/);
+              const memIp = ipMatch ? ipMatch[1] : null;
+              const member = { uuid, name, ip: memIp, invisible };
+              members.push(member);
+              if (uuid === coordinatorUuid) coordinator = member;
+            }
+            if (!coordinator) continue;
+            rooms.push({
+              roomName: coordinator.name,
+              coordinatorUuid,
+              coordinatorIp: coordinator.ip,
+              members
+            });
+          }
+          resolve(rooms);
+        } catch (e) { resolve([]); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('topology timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Full room discovery: SSDP scan, then fetch topology from any reachable
+ * device. Returns one entry per ROOM (coordinator), filtering out
+ * satellites/surrounds. Falls back to raw SSDP devices if topology fails.
+ */
+async function discoverRooms(timeoutMs = 5000) {
+  const devices = await discoverSonos(timeoutMs);
+  if (!devices.length) return { rooms: [], devices: [] };
+
+  let rooms = [];
+  for (const d of devices) {
+    try {
+      rooms = await fetchZoneTopology(d.ip);
+      if (rooms.length) break;
+    } catch {}
+  }
+
+  // Enrich rooms with model info from SSDP results
+  const byUuid = new Map(devices.map(d => [d.uuid, d]));
+  const enriched = rooms.map(r => {
+    const dev = byUuid.get(r.coordinatorUuid);
+    return {
+      name: r.roomName,
+      ip: r.coordinatorIp,
+      uuid: r.coordinatorUuid,
+      model: dev?.model || 'Sonos',
+      memberCount: r.members.length,
+      members: r.members
+    };
+  });
+
+  return { rooms: enriched, devices };
+}
+
+module.exports = { discoverSonos, fetchDeviceDescription, fetchZoneTopology, discoverRooms };
