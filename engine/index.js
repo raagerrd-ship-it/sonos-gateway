@@ -1451,25 +1451,41 @@ async function main() {
   log.info(`🔊 Sonos Buddy Engine v${VERSION} starting on port ${PORT}...`);
   log.info(`🔊 Configured: ${sonosConfig.sonosName || 'unnamed'} (UUID: ${sonosConfig.sonosUuid || 'none'}, IP: ${SONOS_IP})`);
   
-  // Auto-scan to resolve UUID → current IP (handles DHCP changes)
-  if (sonosConfig.sonosUuid) {
-    log.info(`🔍 [SSDP] Auto-scanning to verify UUID ${sonosConfig.sonosUuid}...`);
+  // Auto-scan to resolve saved room/UUID → current coordinator IP
+  // (handles DHCP changes AND speaker swaps within a room)
+  if (sonosConfig.sonosUuid || sonosConfig.sonosName) {
+    log.info(`🔍 [SSDP] Auto-scanning to resolve "${sonosConfig.sonosName || '?'}" (UUID ${sonosConfig.sonosUuid || 'none'})...`);
     try {
-      const devices = await discoverSonos(5000);
-      sonosConfig.knownDevices = devices;
-      saveSonosConfig(sonosConfig);
-      const match = devices.find(d => d.uuid === sonosConfig.sonosUuid);
-      if (match && match.ip !== SONOS_IP) {
-        log.info(`🔄 [SSDP] IP changed: ${SONOS_IP} → ${match.ip} for "${match.name}"`);
-        SONOS_IP = match.ip;
-        sonosConfig.sonosIp = match.ip;
-        sonosConfig.sonosName = match.name || sonosConfig.sonosName;
-        saveSonosConfig(sonosConfig);
-      } else if (match) {
-        log.info(`✅ [SSDP] UUID confirmed at ${match.ip}`);
-      } else {
-        log.warn(`⚠️ [SSDP] UUID ${sonosConfig.sonosUuid} not found on network, using saved IP ${SONOS_IP}`);
+      const { rooms, devices } = await discoverRooms(5000);
+      const list = rooms.length ? rooms : devices;
+      sonosConfig.knownDevices = list;
+
+      // 1. Prefer match by room name (coordinator may have changed UUID e.g. replaced speaker)
+      // 2. Fall back to UUID match against rooms (coordinator's UUID)
+      // 3. Fall back to UUID match against any SSDP device
+      let match = null;
+      if (sonosConfig.sonosName) {
+        match = rooms.find(r => r.name === sonosConfig.sonosName);
       }
+      if (!match && sonosConfig.sonosUuid) {
+        match = rooms.find(r => r.uuid === sonosConfig.sonosUuid)
+             || devices.find(d => d.uuid === sonosConfig.sonosUuid);
+      }
+
+      if (match && match.ip) {
+        if (match.ip !== SONOS_IP) {
+          log.info(`🔄 [SSDP] Coordinator IP for "${match.name}": ${SONOS_IP} → ${match.ip}`);
+          SONOS_IP = match.ip;
+          sonosConfig.sonosIp = match.ip;
+        } else {
+          log.info(`✅ [SSDP] Coordinator confirmed at ${match.ip}`);
+        }
+        sonosConfig.sonosName = match.name || sonosConfig.sonosName;
+        sonosConfig.sonosUuid = match.uuid || sonosConfig.sonosUuid;
+      } else {
+        log.warn(`⚠️ [SSDP] "${sonosConfig.sonosName || sonosConfig.sonosUuid}" not found on network, using saved IP ${SONOS_IP}`);
+      }
+      saveSonosConfig(sonosConfig);
     } catch (err) {
       log.warn(`⚠️ [SSDP] Auto-scan failed: ${err.message}, using saved IP ${SONOS_IP}`);
     }
