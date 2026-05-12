@@ -704,6 +704,7 @@ function subscribeSonosEvents() {
     log.error(`❌ [SONOS] Subscribe error: ${err.message}`);
     const retryMs = Math.min(5000 * Math.pow(2, Math.min(sonosSubscribeRetries++, 5)), 120000);
     log.info(`🔄 [SONOS] Retrying subscribe in ${Math.round(retryMs / 1000)}s...`);
+    if (sonosSubscribeRetries >= 2) reresolveCoordinator().catch(() => {});
     setTimeout(() => subscribeSonosEvents(), retryMs);
   });
   
@@ -711,6 +712,7 @@ function subscribeSonosEvents() {
     req.destroy();
     log.error('❌ [SONOS] Subscribe timeout');
     const retryMs = Math.min(5000 * Math.pow(2, Math.min(sonosSubscribeRetries++, 5)), 120000);
+    if (sonosSubscribeRetries >= 2) reresolveCoordinator().catch(() => {});
     setTimeout(() => subscribeSonosEvents(), retryMs);
   });
   
