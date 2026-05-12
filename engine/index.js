@@ -420,10 +420,7 @@ function getSonosPlaybackState(transportState) {
     return 'PLAYBACK_STATE_PLAYING';
   }
   if (transportState === 'STOPPED') {
-    if (lastSonosEvent?.playbackState && lastSonosEvent.playbackState !== 'PLAYBACK_STATE_IDLE') {
-      return lastSonosEvent.playbackState;
-    }
-    return 'PLAYBACK_STATE_PAUSED';
+    return 'PLAYBACK_STATE_IDLE';
   }
   return 'PLAYBACK_STATE_IDLE';
 }
@@ -1013,7 +1010,7 @@ const tickData = {
   trackName: null,
   artistName: null,
   albumName: null,
-  playbackState: 'PLAYBACK_STATE_PLAYING',
+  playbackState: 'PLAYBACK_STATE_IDLE',
   groupId: null,
   groupName: null,
 };
@@ -1025,8 +1022,9 @@ function startPositionBroadcast() {
     const cloudActive = cloudConfig.enabled && cloudConfig.positionUrl && cloudConfig.secret;
     if (sonosEventClients.length === 0 && !cloudActive) return;
     try {
-      const [posXml, volXml, muteXml] = await Promise.all([
+      const [posXml, transXml, volXml, muteXml] = await Promise.all([
         soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
+        soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
         soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
         soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null)
       ]);
@@ -1036,6 +1034,14 @@ function startPositionBroadcast() {
       if (muteXml) { const v = extractTag(muteXml, 'CurrentMute'); if (v !== null) mute = v === '1'; }
       const relTime = extractTag(posXml, 'RelTime');
       const trackDuration = extractTag(posXml, 'TrackDuration');
+      const transportState = extractTag(transXml, 'CurrentTransportState');
+      const currentPlaybackState = getSonosPlaybackState(transportState);
+
+      // Force update lastSonosEvent's playback state if it has changed drastically (sync)
+      if (lastSonosEvent &&
+          (transportState === 'PLAYING' || transportState === 'PAUSED_PLAYBACK' || transportState === 'STOPPED')) {
+        lastSonosEvent.playbackState = currentPlaybackState;
+      }
 
       // Mutate the reusable tick object in place
       tickData.positionMillis = parseTime(relTime);
@@ -1050,7 +1056,7 @@ function startPositionBroadcast() {
       tickData.trackName = lastSonosEvent?.trackName || null;
       tickData.artistName = lastSonosEvent?.artistName || null;
       tickData.albumName = lastSonosEvent?.albumName || null;
-      tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING';
+      tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_IDLE';
       tickData.groupId = cachedGroupId;
       tickData.groupName = cachedGroupName;
 
@@ -1064,7 +1070,7 @@ function startPositionBroadcast() {
         tickData.trackName = lastSonosEvent?.trackName || null;
         tickData.artistName = lastSonosEvent?.artistName || null;
         tickData.albumName = lastSonosEvent?.albumName || null;
-        tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_PLAYING';
+        tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_IDLE';
         tickData.groupId = cachedGroupId;
         tickData.groupName = cachedGroupName;
         if (sonosEventClients.length > 0) broadcastSSE(tickData);
@@ -1328,11 +1334,7 @@ const server = http.createServer(async (req, res) => {
           const transportState = extractTag(transXml, 'CurrentTransportState');
           const currentTransportStatus = extractTag(transXml, 'CurrentTransportStatus');
           const currentSpeed = extractTag(transXml, 'CurrentSpeed');
-          let playbackState = 'PLAYBACK_STATE_IDLE';
-          if (transportState === 'PLAYING') playbackState = 'PLAYBACK_STATE_PLAYING';
-          else if (transportState === 'PAUSED_PLAYBACK') playbackState = 'PLAYBACK_STATE_PAUSED';
-          else if (transportState === 'TRANSITIONING') playbackState = 'PLAYBACK_STATE_PLAYING';
-          else if (transportState === 'STOPPED') playbackState = 'PLAYBACK_STATE_PAUSED';
+          const playbackState = getSonosPlaybackState(transportState);
           
           let albumArtUri = null;
           if (didl && didl.albumArtURI) {
