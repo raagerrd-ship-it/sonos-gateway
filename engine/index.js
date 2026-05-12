@@ -1165,15 +1165,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // GET /api/discover
+      // GET /api/discover — returns one entry per room (coordinator only)
       if (req.method === 'GET' && pathname === '/api/discover') {
         log.info('🔍 [SSDP] Starting network scan...');
         try {
-          const devices = await discoverSonos(5000);
-          log.info(`🔍 [SSDP] Found ${devices.length} Sonos device(s)`);
-          sonosConfig.knownDevices = devices;
+          const { rooms, devices } = await discoverRooms(5000);
+          const list = rooms.length ? rooms : devices;
+          log.info(`🔍 [SSDP] Found ${devices.length} device(s), ${rooms.length} room(s)`);
+          sonosConfig.knownDevices = list;
           saveSonosConfig(sonosConfig);
-          sendJson(res, { ok: true, devices, currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP });
+          sendJson(res, { ok: true, devices: list, currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP });
         } catch (err) {
           sendJson(res, { ok: true, devices: sonosConfig.knownDevices || [], currentUuid: sonosConfig.sonosUuid, currentIp: SONOS_IP, cached: true });
         }
