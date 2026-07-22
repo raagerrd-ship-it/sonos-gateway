@@ -6,6 +6,7 @@ const https = require('https');
 const os = require('os');
 const { discoverSonos, discoverRooms, fetchZoneTopology } = require('./discover');
 const { extractPalette } = require('./palette');
+const spotify = require('./spotify');
 
 // Version — prefer version.json (CI-generated), fallback to package.json
 const VERSION = (() => {
