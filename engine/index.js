@@ -1267,6 +1267,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // GET /api/palette/history
+      if (req.method === 'GET' && pathname === '/api/palette/history') {
+        const hues = getHueHistory();
+        sendJson(res, { ok: true, hues, size: hues.length });
+        return;
+      }
+
+      // DELETE /api/palette/history
+      if (req.method === 'DELETE' && pathname === '/api/palette/history') {
+        clearHueHistory();
+        sendJson(res, { ok: true });
+        return;
+      }
+
       // GET /api/spotify/status
       if (req.method === 'GET' && pathname === '/api/spotify/status') {
         sendJson(res, { ok: true, ...spotify.getSpotifyStatus() });
