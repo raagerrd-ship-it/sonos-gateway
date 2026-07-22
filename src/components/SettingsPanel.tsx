@@ -54,6 +54,54 @@ export function SettingsPanel() {
     return () => clearInterval(interval);
   }, [open]);
 
+  // Load + poll Spotify status/current
+  useEffect(() => {
+    if (!open) return;
+    const load = () => {
+      sonosAPI.getSpotifyStatus().then(setSpotifyStatus).catch(() => {});
+      sonosAPI.getSpotifyCurrent().then(setSpotifyCurrent).catch(() => {});
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [open]);
+
+  const saveSpotify = async () => {
+    if (!spotifyClientId.trim() || !spotifyClientSecret.trim()) {
+      toast.error('Ange både Client ID och Client Secret');
+      return;
+    }
+    setSpotifySaving(true);
+    try {
+      const r = await sonosAPI.setSpotifyCredentials(spotifyClientId.trim(), spotifyClientSecret.trim());
+      if (r.ok) {
+        toast.success('Spotify anslutet');
+        setSpotifyClientId('');
+        setSpotifyClientSecret('');
+        const s = await sonosAPI.getSpotifyStatus();
+        setSpotifyStatus(s);
+      } else {
+        toast.error(`Kunde inte ansluta: ${r.error || 'okänt fel'}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte spara');
+    } finally {
+      setSpotifySaving(false);
+    }
+  };
+
+  const clearSpotify = async () => {
+    try {
+      await sonosAPI.clearSpotifyCredentials();
+      setSpotifyStatus({ configured: false, tokenValid: false, cacheSize: 0, lastError: null });
+      setSpotifyCurrent(null);
+      toast.success('Spotify-credentials rensade');
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte rensa');
+    }
+  };
+
+
   const saveCloud = async () => {
     setSaving(true);
     try {
