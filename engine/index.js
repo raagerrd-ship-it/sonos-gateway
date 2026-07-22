@@ -5,7 +5,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const { discoverSonos, discoverRooms, fetchZoneTopology } = require('./discover');
-const { extractPalette } = require('./palette');
+const { extractPalette, pushHueHistory, getHueHistory, clearHueHistory } = require('./palette');
 const spotify = require('./spotify');
 
 // Version — prefer version.json (CI-generated), fallback to package.json
@@ -866,6 +866,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
       // otherwise clear current immediately so we never leak the previous track's colors.
       if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri === cachedRawAlbumArtUri && cachedNextPalette.length > 0) {
         cachedCurrentPalette = cachedNextPalette;
+        try { if (cachedCurrentPalette[0]) pushHueHistory(cachedCurrentPalette[0]); } catch {}
         log.info('🎨 [PALETTE] Promoted pre-fetched next → current');
       } else {
         cachedCurrentPalette = [];
@@ -884,6 +885,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
               return;
             }
             cachedCurrentPalette = palette;
+            try { if (palette && palette[0]) pushHueHistory(palette[0]); } catch {}
             if (lastSonosEvent) {
               lastSonosEvent.currentPalette = palette;
               const prevSource = lastSonosEvent.source;
@@ -1262,6 +1264,20 @@ const server = http.createServer(async (req, res) => {
         saveSonosConfig(sonosConfig);
         log.info(`[DEBUG] Raw debug logging ${debugLogging ? 'ENABLED' : 'DISABLED'} via UI`);
         sendJson(res, { ok: true, enabled: debugLogging });
+        return;
+      }
+
+      // GET /api/palette/history
+      if (req.method === 'GET' && pathname === '/api/palette/history') {
+        const hues = getHueHistory();
+        sendJson(res, { ok: true, hues, size: hues.length });
+        return;
+      }
+
+      // DELETE /api/palette/history
+      if (req.method === 'DELETE' && pathname === '/api/palette/history') {
+        clearHueHistory();
+        sendJson(res, { ok: true });
         return;
       }
 
