@@ -287,6 +287,109 @@ export function SettingsPanel() {
               </div>
             )}
           </div>
+
+          {/* Spotify audio-features */}
+          <div className="pt-4 border-t border-border">
+            <div className="flex items-center gap-2 mb-3">
+              <Music2 className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">Spotify audio-features</h3>
+            </div>
+
+            {/* Status badge */}
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Status</span>
+              {!spotifyStatus?.configured ? (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-secondary text-muted-foreground">
+                  EJ KONFIGURERAD
+                </span>
+              ) : spotifyStatus.tokenValid ? (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-primary/15 text-primary">
+                  ANSLUTEN · {spotifyStatus.cacheSize} låtar cachade
+                </span>
+              ) : (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-destructive/15 text-destructive">
+                  FEL{spotifyStatus.lastError ? `: ${spotifyStatus.lastError}` : ''}
+                </span>
+              )}
+            </div>
+
+            {!spotifyStatus?.configured ? (
+              <>
+                <ol className="text-[11px] text-muted-foreground space-y-1 mb-3 list-decimal list-inside">
+                  <li>Öppna <span className="font-mono">developer.spotify.com/dashboard</span></li>
+                  <li>Create app · valfritt namn</li>
+                  <li>Redirect URI: <span className="font-mono">http://localhost</span> (krävs av formuläret, används ej)</li>
+                  <li>Klistra in Client ID + Client Secret nedan</li>
+                </ol>
+                <div className="space-y-2">
+                  <div>
+                    <Label className="text-xs">Client ID</Label>
+                    <Input
+                      value={spotifyClientId}
+                      onChange={(e) => setSpotifyClientId(e.target.value)}
+                      placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                      className="mt-1 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Client Secret</Label>
+                    <Input
+                      type="password"
+                      value={spotifyClientSecret}
+                      onChange={(e) => setSpotifyClientSecret(e.target.value)}
+                      placeholder="••••••••••••••••••••••••••••••••"
+                      className="mt-1 font-mono text-xs"
+                    />
+                  </div>
+                  <Button
+                    onClick={saveSpotify}
+                    disabled={spotifySaving}
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                  >
+                    {spotifySaving ? 'Testar…' : 'Testa & Spara'}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                {spotifyCurrent?.features && spotifyCurrent.track ? (
+                  <div className="p-3 bg-secondary/50 rounded-lg text-xs space-y-1">
+                    <div className="text-muted-foreground uppercase tracking-wider text-[10px]">
+                      Nu spelas
+                    </div>
+                    <div className="font-semibold text-foreground truncate">
+                      {spotifyCurrent.track}
+                    </div>
+                    <div className="text-muted-foreground truncate">
+                      {spotifyCurrent.artist}
+                    </div>
+                    <div className="pt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+                      <div>Tempo: <span className="text-foreground">{Math.round(spotifyCurrent.features.tempo)} BPM</span></div>
+                      <div>Energy: <span className="text-foreground">{spotifyCurrent.features.energy.toFixed(2)}</span></div>
+                      <div>Dance: <span className="text-foreground">{spotifyCurrent.features.danceability.toFixed(2)}</span></div>
+                      <div>Valence: <span className="text-foreground">{spotifyCurrent.features.valence.toFixed(2)}</span></div>
+                      <div>Acoustic: <span className="text-foreground">{spotifyCurrent.features.acousticness.toFixed(2)}</span></div>
+                      <div>Loud: <span className="text-foreground">{spotifyCurrent.features.loudness.toFixed(1)} dB</span></div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-secondary/50 rounded-lg text-xs text-muted-foreground">
+                    Väntar på track-features…
+                  </div>
+                )}
+                <Button
+                  onClick={clearSpotify}
+                  variant="ghost"
+                  size="sm"
+                  className="w-full mt-3 text-destructive hover:text-destructive"
+                >
+                  Rensa credentials
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
