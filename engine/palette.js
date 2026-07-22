@@ -277,20 +277,16 @@ function kmeansIterate(numPixels) {
 
 // ─── LED-optimering i Lab-rymd ─────────────────────────────────────────────
 
-const CHROMA_MIN = 8;
-const L_TARGET_MIN = 50;
-const L_TARGET_MAX = 65;
-// Över-mättning för BLEDOM-kompensation:
-// Lampan dimmer RGB linjärt, vilket tappar perceptuell mättnad vid lägre
-// ljusstyrka (pastell blir nästan vit-grått). Genom att skicka över-mättade
-// färger från start får vi perceptuellt korrekt mättnad efter dimning.
-// labToRgb clamp:ar till 0-255 så extra-boost utanför sRGB-gamut klipps
-// naturligt till mättad ren-färg på den dominerande kanalen.
-const CHROMA_BOOST = 2.2;
+const CHROMA_MIN = 25;
+const L_TARGET_MIN = 55;
+const L_TARGET_MAX = 72;
+// Över-mättning för BLEDOM-kompensation (lampan dimmer RGB linjärt).
+const CHROMA_BOOST = 2.8;
 
-function ledOptimizeLab(L, a, b) {
+function ledOptimizeLab(L, a, b, chromaMinOverride) {
   const chroma = Math.sqrt(a * a + b * b);
-  if (chroma < CHROMA_MIN) return null;
+  const cMin = chromaMinOverride != null ? chromaMinOverride : CHROMA_MIN;
+  if (chroma < cMin) return null;
 
   const newA = a * CHROMA_BOOST;
   const newB = b * CHROMA_BOOST;
@@ -303,10 +299,62 @@ function ledOptimizeLab(L, a, b) {
   return [RGB_SCRATCH[0], RGB_SCRATCH[1], RGB_SCRATCH[2]];
 }
 
+// ─── Anti-repetition hue-history ───────────────────────────────────────────
+// Runtime-state: penalize:a kluster vars hue ligger nära nyss använda tracks.
+
+const HUE_HISTORY_SIZE = 5;
+const HUE_PENALTY_THRESHOLD = 30;   // grader
+const HUE_PENALTY_WEIGHT = 0.6;
+const hueHistory = [];
+
+function labToHue(a, b) {
+  let h = Math.atan2(b, a) * 180 / Math.PI;
+  if (h < 0) h += 360;
+  return h;
+}
+
+function hueDistance(h1, h2) {
+  const diff = Math.abs(h1 - h2);
+  return Math.min(diff, 360 - diff);
+}
+
+function penaltyForHue(h) {
+  let penalty = 1.0;
+  for (const past of hueHistory) {
+    const dist = hueDistance(h, past.h);
+    if (dist < HUE_PENALTY_THRESHOLD) {
+      const p = 1 - HUE_PENALTY_WEIGHT * (1 - dist / HUE_PENALTY_THRESHOLD);
+      penalty *= p;
+    }
+  }
+  return penalty;
+}
+
+function pushHueHistory(rgb) {
+  if (!rgb || rgb.length < 3) return;
+  const r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  if (d < 0.05) return;
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h = h * 60;
+  if (h < 0) h += 360;
+  hueHistory.push({ h });
+  if (hueHistory.length > HUE_HISTORY_SIZE) hueHistory.shift();
+}
+
+function getHueHistory() { return hueHistory.map(x => x.h); }
+function clearHueHistory() { hueHistory.length = 0; }
+
 // ─── Huvudfunktion ─────────────────────────────────────────────────────────
 
-function extractPaletteFromFlat(flat) {
-  // 1. RGB → Lab för alla pixlar
+function extractWithChromaMin(flat, chromaMin, opts) {
+  const usePenalty = !opts || opts.usePenalty !== false;
+
+  // 1. RGB → Lab
   for (let k = 0, pi = 0; k < TARGET_PIXELS; k++, pi += 3) {
     rgbToLab(flat[pi], flat[pi + 1], flat[pi + 2], LAB_SCRATCH);
     LAB_PIXELS[pi]     = LAB_SCRATCH[0];
@@ -318,54 +366,43 @@ function extractPaletteFromFlat(flat) {
   kmeansInit(TARGET_PIXELS);
   kmeansIterate(TARGET_PIXELS);
 
-  // 3. Bygg cluster-info med score = pixel-count × chroma-vikt.
-  // Mättade färger viktas högre — matchar mänsklig perception av "dominant".
-  const clusters = [];
+  // 3. LED-optimera + chroma-filter
+  const valid = [];
   for (let c = 0; c < K; c++) {
     const ci = c * 3;
     const L = CENTROIDS[ci], a = CENTROIDS[ci + 1], b = CENTROIDS[ci + 2];
+    const optimized = ledOptimizeLab(L, a, b, chromaMin);
+    if (!optimized) continue;
     const chroma = Math.sqrt(a * a + b * b);
-    clusters.push({
-      L, a, b,
-      count: CLUSTER_COUNTS[c],
-      chroma,
-      score: CLUSTER_COUNTS[c] * (1 + chroma / 50),
-    });
+    valid.push({ rgb: optimized, a, b, chroma, count: CLUSTER_COUNTS[c] });
   }
 
-  // 4. Sortera efter dominans
-  clusters.sort((x, y) => y.score - x.score);
+  // 4. Score + optional hue-penalty
+  const cap = TARGET_PIXELS / 10;
+  const scored = valid.map(v => {
+    const hue = labToHue(v.a, v.b);
+    const penalty = usePenalty ? penaltyForHue(hue) : 1.0;
+    const rawScore = v.chroma * Math.min(v.count, cap);
+    return { rgb: v.rgb, hue, score: rawScore * penalty };
+  });
+  scored.sort((x, y) => y.score - x.score);
 
-  // ── 5. LED-optimera + filtrera grå/mörka kluster ──
-  // Bara kluster som passerar ledOptimizeLab-filtret räknas som "riktiga" färger.
-  // Kluster som returnerar null har för låg kromaticitet för att synas på LED.
-  const result = [];
-  for (let c = 0; c < clusters.length && result.length < 4; c++) {
-    const cl = clusters[c];
-    const optimized = ledOptimizeLab(cl.L, cl.a, cl.b);
-    if (optimized) result.push(optimized);
-  }
+  return scored.slice(0, 4).map(s => s.rgb);
+}
 
-  // ── 6. Fyll ut till 4 färger ──
-  // Hellre upprepa huvudfärgen än att fylla med grumliga/mörka kluster.
-  // Det ger:
-  //   - Visuell konsistens (alla 4 platser har en riktig färg från bilden)
-  //   - LED:n lyser med rätt mättnad i stället för att bli halvt släckt
-  //   - Användaren ser tydligt att låten "är" en viss färg
-  //
-  // Om k-means inte hittade någon LED-användbar färg alls (helt monokrom
-  // bild som albumcovers med bara svartvitt), använd standardfallback.
-  if (result.length === 0) {
+function extractPaletteFromFlat(flat) {
+  let palette = extractWithChromaMin(flat, 25, { usePenalty: true });
+  if (palette.length < 2) palette = extractWithChromaMin(flat, 25, { usePenalty: false });
+  if (palette.length < 2) palette = extractWithChromaMin(flat, 15, { usePenalty: false });
+  if (palette.length < 2) palette = extractWithChromaMin(flat, 8,  { usePenalty: false });
+  if (palette.length < 2) palette = extractWithChromaMin(flat, 3,  { usePenalty: false });
+
+  if (palette.length === 0) {
     return [[255, 80, 80], [255, 80, 80], [255, 80, 80], [255, 80, 80]];
   }
-
-  // Upprepa huvudfärgen (result[0]) för platser vi inte lyckades fylla.
-  const primary = result[0];
-  while (result.length < 4) {
-    result.push([primary[0], primary[1], primary[2]]);
-  }
-
-  return result;
+  const primary = palette[0];
+  while (palette.length < 4) palette.push([primary[0], primary[1], primary[2]]);
+  return palette;
 }
 
 /**
