@@ -866,6 +866,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
       // otherwise clear current immediately so we never leak the previous track's colors.
       if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri === cachedRawAlbumArtUri && cachedNextPalette.length > 0) {
         cachedCurrentPalette = cachedNextPalette;
+        try { if (cachedCurrentPalette[0]) pushHueHistory(cachedCurrentPalette[0]); } catch {}
         log.info('🎨 [PALETTE] Promoted pre-fetched next → current');
       } else {
         cachedCurrentPalette = [];
