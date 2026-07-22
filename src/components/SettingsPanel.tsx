@@ -7,6 +7,9 @@ import { Label } from '@/components/ui/label';
 import { sonosAPI, type CloudConfig } from '@/hooks/useSonosAPI';
 import { toast } from 'sonner';
 
+type SpotifyStatus = { configured: boolean; tokenValid: boolean; cacheSize: number; lastError: string | null };
+type SpotifyCurrent = Awaited<ReturnType<typeof sonosAPI.getSpotifyCurrent>>;
+
 export function SettingsPanel() {
   const [open, setOpen] = useState(false);
   const [cloud, setCloud] = useState<CloudConfig | null>(null);
@@ -20,6 +23,13 @@ export function SettingsPanel() {
   const [cloudPositionUrl, setCloudPositionUrl] = useState('');
   const [cloudSecret, setCloudSecret] = useState('');
   const [cloudInterval, setCloudInterval] = useState(3000);
+
+  // Spotify state
+  const [spotifyStatus, setSpotifyStatus] = useState<SpotifyStatus | null>(null);
+  const [spotifyCurrent, setSpotifyCurrent] = useState<SpotifyCurrent | null>(null);
+  const [spotifyClientId, setSpotifyClientId] = useState('');
+  const [spotifyClientSecret, setSpotifyClientSecret] = useState('');
+  const [spotifySaving, setSpotifySaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
