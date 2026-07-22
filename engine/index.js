@@ -915,6 +915,17 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
     }
     
     fetchZoneGroupInfo().catch(() => {});
+
+    // Spotify audio-features on track change (non-blocking)
+    const spTrackName = didl ? didl.title : null;
+    const spArtistName = didl ? didl.creator : null;
+    if (spTrackName && spArtistName) {
+      const spKey = `${spArtistName}::${spTrackName}`;
+      if (spKey !== lastSpotifyKey) {
+        lastSpotifyKey = spKey;
+        spotify.onTrackChange(spArtistName, spTrackName).catch(e => log.warn(`spotify.onTrackChange failed: ${e.message}`));
+      }
+    }
     
     const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
     cachedMediaType = mediaType;
