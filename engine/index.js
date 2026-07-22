@@ -1265,6 +1265,41 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // GET /api/spotify/status
+      if (req.method === 'GET' && pathname === '/api/spotify/status') {
+        sendJson(res, { ok: true, ...spotify.getSpotifyStatus() });
+        return;
+      }
+
+      // GET /api/spotify/current
+      if (req.method === 'GET' && pathname === '/api/spotify/current') {
+        const cur = spotify.getCurrentFeatures();
+        if (!cur) { sendJson(res, { artist: null, track: null, features: null, updatedAt: null }); return; }
+        sendJson(res, cur);
+        return;
+      }
+
+      // POST /api/spotify/credentials
+      if (req.method === 'POST' && pathname === '/api/spotify/credentials') {
+        const body = await parseBody(req);
+        if (!body.clientId || !body.clientSecret) {
+          sendJson(res, { ok: false, error: 'missing_fields' }, 400);
+          return;
+        }
+        const result = await spotify.setSpotifyCredentials(body.clientId, body.clientSecret);
+        log.info(`🎧 [SPOTIFY] Credentials ${result.ok ? 'saved' : 'rejected'}${result.ok ? '' : ` (${result.error})`}`);
+        sendJson(res, result, result.ok ? 200 : 400);
+        return;
+      }
+
+      // DELETE /api/spotify/credentials
+      if (req.method === 'DELETE' && pathname === '/api/spotify/credentials') {
+        spotify.clearSpotifyCredentials();
+        log.info(`🎧 [SPOTIFY] Credentials cleared`);
+        sendJson(res, { ok: true });
+        return;
+      }
+
       // GET /api/cloud-config
       if (req.method === 'GET' && pathname === '/api/cloud-config') {
         sendJson(res, {
