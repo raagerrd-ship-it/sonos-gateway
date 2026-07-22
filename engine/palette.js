@@ -438,4 +438,4 @@ async function extractPalette(albumArtUri, sonosIp, logger) {
   }
 }
 
-module.exports = { extractPalette };
+module.exports = { extractPalette, pushHueHistory, getHueHistory, clearHueHistory };
