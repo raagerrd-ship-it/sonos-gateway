@@ -386,6 +386,7 @@ let cachedRawAlbumArtUri = null;
 let cachedRawNextAlbumArtUri = null;
 let cachedCurrentPalette = [];
 let cachedNextPalette = [];
+let lastSpotifyKey = null;
 let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
 let sonosUpnpHandlerBusy = false;
