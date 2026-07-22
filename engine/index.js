@@ -6,6 +6,7 @@ const https = require('https');
 const os = require('os');
 const { discoverSonos, discoverRooms, fetchZoneTopology } = require('./discover');
 const { extractPalette } = require('./palette');
+const spotify = require('./spotify');
 
 // Version — prefer version.json (CI-generated), fallback to package.json
 const VERSION = (() => {
@@ -385,6 +386,7 @@ let cachedRawAlbumArtUri = null;
 let cachedRawNextAlbumArtUri = null;
 let cachedCurrentPalette = [];
 let cachedNextPalette = [];
+let lastSpotifyKey = null;
 let paletteExtractionInProgress = false;
 let sonosSubscribeRetries = 0;
 let sonosUpnpHandlerBusy = false;
@@ -914,6 +916,17 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
     }
     
     fetchZoneGroupInfo().catch(() => {});
+
+    // Spotify audio-features on track change (non-blocking)
+    const spTrackName = didl ? didl.title : null;
+    const spArtistName = didl ? didl.creator : null;
+    if (spTrackName && spArtistName) {
+      const spKey = `${spArtistName}::${spTrackName}`;
+      if (spKey !== lastSpotifyKey) {
+        lastSpotifyKey = spKey;
+        spotify.onTrackChange(spArtistName, spTrackName).catch(e => log.warn(`spotify.onTrackChange failed: ${e.message}`));
+      }
+    }
     
     const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
     cachedMediaType = mediaType;
@@ -1252,6 +1265,41 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // GET /api/spotify/status
+      if (req.method === 'GET' && pathname === '/api/spotify/status') {
+        sendJson(res, { ok: true, ...spotify.getSpotifyStatus() });
+        return;
+      }
+
+      // GET /api/spotify/current
+      if (req.method === 'GET' && pathname === '/api/spotify/current') {
+        const cur = spotify.getCurrentFeatures();
+        if (!cur) { sendJson(res, { artist: null, track: null, features: null, updatedAt: null }); return; }
+        sendJson(res, cur);
+        return;
+      }
+
+      // POST /api/spotify/credentials
+      if (req.method === 'POST' && pathname === '/api/spotify/credentials') {
+        const body = await parseBody(req);
+        if (!body.clientId || !body.clientSecret) {
+          sendJson(res, { ok: false, error: 'missing_fields' }, 400);
+          return;
+        }
+        const result = await spotify.setSpotifyCredentials(body.clientId, body.clientSecret);
+        log.info(`🎧 [SPOTIFY] Credentials ${result.ok ? 'saved' : 'rejected'}${result.ok ? '' : ` (${result.error})`}`);
+        sendJson(res, result, result.ok ? 200 : 400);
+        return;
+      }
+
+      // DELETE /api/spotify/credentials
+      if (req.method === 'DELETE' && pathname === '/api/spotify/credentials') {
+        spotify.clearSpotifyCredentials();
+        log.info(`🎧 [SPOTIFY] Credentials cleared`);
+        sendJson(res, { ok: true });
+        return;
+      }
+
       // GET /api/cloud-config
       if (req.method === 'GET' && pathname === '/api/cloud-config') {
         sendJson(res, {
@@ -1541,6 +1589,9 @@ async function main() {
   subscribeSonosEvents();
   startPositionBroadcast();
   log.info(`📡 [SONOS] Position broadcast started`);
+
+  // Spotify audio-features (client-credentials, optional)
+  try { spotify.init(log); log.info(`🎧 [SPOTIFY] Module initialized (${spotify.getSpotifyStatus().configured ? 'configured' : 'not configured'})`); } catch (e) { log.warn(`[SPOTIFY] init failed: ${e.message}`); }
 
   // Periodic GC to keep RSS low on Pi Zero 2 W (512MB total RAM).
   // V8 holds onto old-space memory unless explicitly nudged; without this
