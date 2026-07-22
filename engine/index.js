@@ -1543,6 +1543,9 @@ async function main() {
   startPositionBroadcast();
   log.info(`📡 [SONOS] Position broadcast started`);
 
+  // Spotify audio-features (client-credentials, optional)
+  try { spotify.init(log); log.info(`🎧 [SPOTIFY] Module initialized (${spotify.getSpotifyStatus().configured ? 'configured' : 'not configured'})`); } catch (e) { log.warn(`[SPOTIFY] init failed: ${e.message}`); }
+
   // Periodic GC to keep RSS low on Pi Zero 2 W (512MB total RAM).
   // V8 holds onto old-space memory unless explicitly nudged; without this
   // RSS slowly creeps up from ~35MB to 90MB+ even though heapUsed is small.
