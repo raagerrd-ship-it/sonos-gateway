@@ -884,6 +884,7 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
               return;
             }
             cachedCurrentPalette = palette;
+            try { if (palette && palette[0]) pushHueHistory(palette[0]); } catch {}
             if (lastSonosEvent) {
               lastSonosEvent.currentPalette = palette;
               const prevSource = lastSonosEvent.source;
