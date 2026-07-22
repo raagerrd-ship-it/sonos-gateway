@@ -97,4 +97,32 @@ export const sonosAPI = {
     }),
   getVersion: () => apiFetch<VersionResponse>('/api/version'),
   getHealth: () => apiFetch<HealthResponse>('/api/health'),
+
+  getSpotifyStatus: () =>
+    apiFetch<{ ok: boolean; configured: boolean; tokenValid: boolean; cacheSize: number; lastError: string | null }>(
+      '/api/spotify/status'
+    ),
+  getSpotifyCurrent: () =>
+    apiFetch<{
+      artist: string | null;
+      track: string | null;
+      features: {
+        tempo: number;
+        energy: number;
+        danceability: number;
+        acousticness: number;
+        valence: number;
+        instrumentalness: number;
+        loudness: number;
+      } | null;
+      updatedAt: number | null;
+    }>('/api/spotify/current'),
+  setSpotifyCredentials: (clientId: string, clientSecret: string) =>
+    apiFetch<{ ok: boolean; error?: string }>('/api/spotify/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, clientSecret }),
+    }),
+  clearSpotifyCredentials: () =>
+    apiFetch<{ ok: boolean }>('/api/spotify/credentials', { method: 'DELETE' }),
 };
