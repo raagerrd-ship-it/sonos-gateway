@@ -8,14 +8,15 @@ export function EngineStatus() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const fetch = () => {
+    const load = () => {
       sonosAPI.getVersion().then(setVersion).catch(() => setError(true));
       sonosAPI.getHealth().then((h) => { setHealth(h); setError(false); }).catch(() => setError(true));
     };
-    fetch();
-    const interval = setInterval(fetch, 30000);
+    load();
+    const interval = setInterval(load, error ? 5000 : 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [error]);
+
 
   if (error) {
     return (
