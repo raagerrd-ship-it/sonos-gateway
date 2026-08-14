@@ -34,15 +34,20 @@ export function useSonosSSE() {
   const [connected, setConnected] = useState(false);
   const lastFullRef = useRef<SonosEvent | null>(null);
 
-  const retryDelayRef = useRef(3000);
+  const retryDelayRef = useRef(1000);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const closedRef = useRef(false);
 
   const connect = useCallback(() => {
+    if (closedRef.current) return;
+    esRef.current?.close();
     const es = new EventSource(`${API_BASE}/api/events`);
+    esRef.current = es;
 
     es.onopen = () => {
       setConnected(true);
-      retryDelayRef.current = 3000; // reset backoff on success
+      retryDelayRef.current = 1000; // reset backoff on success
     };
 
     es.onmessage = (e) => {
@@ -72,21 +77,40 @@ export function useSonosSSE() {
     es.onerror = () => {
       setConnected(false);
       es.close();
+      if (closedRef.current) return;
       const delay = retryDelayRef.current;
-      retryDelayRef.current = Math.min(delay * 2, 60000); // backoff up to 60s
+      retryDelayRef.current = Math.min(delay * 2, 15000); // backoff up to 15s
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       retryTimerRef.current = setTimeout(connect, delay);
     };
-
-    return es;
   }, []);
 
   useEffect(() => {
-    const es = connect();
+    closedRef.current = false;
+    connect();
+
+    // Reconnect immediately when the tab/network comes back
+    const kick = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (esRef.current && esRef.current.readyState === EventSource.OPEN) return;
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      retryDelayRef.current = 1000;
+      connect();
+    };
+    window.addEventListener('online', kick);
+    window.addEventListener('focus', kick);
+    document.addEventListener('visibilitychange', kick);
+
     return () => {
-      es.close();
+      closedRef.current = true;
+      window.removeEventListener('online', kick);
+      window.removeEventListener('focus', kick);
+      document.removeEventListener('visibilitychange', kick);
+      esRef.current?.close();
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
   }, [connect]);
 
   return { data, connected };
 }
+
