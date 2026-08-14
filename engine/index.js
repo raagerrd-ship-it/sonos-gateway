@@ -1363,8 +1363,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
-      // GET /api/status
-      if (req.method === 'GET' && pathname === '/api/status') {
+      // GET /api/status (alias: /api/sonos — bakåtkompatibel)
+      if (req.method === 'GET' && (pathname === '/api/status' || pathname === '/api/sonos')) {
         try {
           const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
             soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
