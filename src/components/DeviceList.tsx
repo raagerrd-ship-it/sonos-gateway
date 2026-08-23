@@ -39,10 +39,10 @@ export function DeviceList({ devices, currentUuid, currentIp, onRefresh, scannin
 
   return (
     <Panel
-      title="Enheter på nätverket"
+      title="Enheter"
       icon={<Speaker className="w-3 h-3" />}
       action={
-        <Button onClick={onRefresh} disabled={scanning} className="w-auto min-h-[32px] px-3 text-[11px]">
+        <Button onClick={onRefresh} disabled={scanning} className="!w-auto min-h-[34px] px-3.5 text-[11px] shrink-0">
           {scanning ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
