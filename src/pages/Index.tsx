@@ -52,20 +52,19 @@ const Index = () => {
   }, [scanDevices]);
 
   return (
-    <div className="dark min-h-screen bg-background text-foreground">
-      <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
+    <div className="min-h-screen bg-background text-foreground animate-fade-in">
+      <div className="max-w-lg mx-auto px-4 pt-7 space-y-4 safe-bottom">
         {/* Header */}
-        <div className="flex justify-between items-start">
+        <header className="flex justify-between items-center gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">
-              🔊 Sonos Buddy
+            <h1 className="text-[22px] font-semibold tracking-tight text-foreground">
+              Sonos Buddy
             </h1>
-            <p className="text-sm text-muted-foreground">
-              Välj aktiv Sonos-högtalare
-            </p>
+            <p className="label-eyebrow mt-1">Välj aktiv högtalare</p>
           </div>
           <SettingsPanel />
-        </div>
+        </header>
+
 
         {/* Now Playing */}
         <NowPlaying data={data} />

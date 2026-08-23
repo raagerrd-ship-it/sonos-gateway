@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Wifi, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Wifi, Loader2, Speaker } from 'lucide-react';
+import { Panel, Button } from '@/components/piUi';
 import { sonosAPI, type SonosDevice } from '@/hooks/useSonosAPI';
 import { toast } from 'sonner';
 
@@ -38,36 +38,29 @@ export function DeviceList({ devices, currentUuid, currentIp, onRefresh, scannin
   };
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-3">
-        <span className="text-sm font-semibold text-muted-foreground">
-          Enheter på nätverket
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRefresh}
-          disabled={scanning}
-          className="text-xs"
-        >
+    <Panel
+      title="Enheter"
+      icon={<Speaker className="w-3 h-3" />}
+      action={
+        <Button onClick={onRefresh} disabled={scanning} className="!w-auto min-h-[34px] px-3.5 text-[11px] shrink-0">
           {scanning ? (
             <>
-              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-              Skannar...
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Skannar
             </>
           ) : (
             <>
-              <Wifi className="w-3.5 h-3.5 mr-1.5" />
+              <Wifi className="w-3.5 h-3.5" />
               Skanna
             </>
           )}
         </Button>
-      </div>
-
+      }
+    >
       <div className="flex flex-col gap-2">
         {devices.length === 0 && !scanning && (
-          <div className="text-center py-8 text-sm text-muted-foreground">
-            Klicka "Skanna" för att hitta Sonos-enheter
+          <div className="text-center py-8 text-[13px] text-muted-foreground">
+            Tryck "Skanna" för att hitta Sonos-enheter
           </div>
         )}
         {devices.map((d) => {
@@ -79,23 +72,23 @@ export function DeviceList({ devices, currentUuid, currentIp, onRefresh, scannin
               key={d.uuid || d.ip}
               onClick={() => selectDevice(d)}
               disabled={!!selecting}
-              className={`flex justify-between items-center bg-card border rounded-xl px-4 py-3.5 text-left transition-colors hover:border-muted-foreground/30 ${
+              className={`flex justify-between items-center rounded-xl px-4 min-h-[56px] py-3 text-left transition-all active:scale-[0.99] ring-1 ring-inset ${
                 isActive
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border'
+                  ? 'bg-primary/10 ring-primary/40 shadow-[0_0_18px_hsl(var(--primary)/0.15)]'
+                  : 'bg-foreground/[0.04] ring-border hover:bg-foreground/[0.07]'
               } ${selecting === d.ip ? 'opacity-60' : ''}`}
             >
-              <div>
-                <div className="font-semibold text-sm text-foreground">
+              <div className="min-w-0">
+                <div className="font-semibold text-[13px] text-foreground truncate">
                   {d.name || 'Okänd'}
                 </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
+                <div className="font-mono text-[10px] text-muted-foreground mt-0.5 truncate">
                   {d.ip} · {d.model || 'Sonos'}
                   {d.uuid ? ` · ${d.uuid.substring(0, 8)}` : ''}
                 </div>
               </div>
               {isActive && (
-                <span className="text-[10px] font-bold uppercase tracking-wide bg-primary/15 text-primary px-2 py-0.5 rounded">
+                <span className="ml-3 shrink-0 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
                   Aktiv
                 </span>
               )}
@@ -103,6 +96,6 @@ export function DeviceList({ devices, currentUuid, currentIp, onRefresh, scannin
           );
         })}
       </div>
-    </div>
+    </Panel>
   );
 }
