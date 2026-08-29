@@ -1392,6 +1392,13 @@ const server = http.createServer(async (req, res) => {
       
       // GET /api/status (alias: /api/sonos — bakåtkompatibel)
       if (req.method === 'GET' && (pathname === '/api/status' || pathname === '/api/sonos')) {
+        // Alltid cachat svar om det finns — ingen TTL. Cachen hålls färsk av
+        // refreshStatusCacheSoon(). ?fresh=1 gör den fulla SOAP-hämtningen.
+        const wantFresh = url.searchParams && url.searchParams.get('fresh') === '1';
+        if (!wantFresh && statusCache) {
+          sendJson(res, { ...statusCache, cached: true, cacheAgeMs: Date.now() - statusCacheAt });
+          return;
+        }
         try {
           const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
             soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
@@ -1443,7 +1450,7 @@ const server = http.createServer(async (req, res) => {
           const { nextTrackName, nextArtistName, nextAlbumArtUri } = await resolveNextTrack(nextMeta, trackNumber, nrTracks);
           const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
           
-          sendJson(res, {
+          const statusPayload = {
             ok: true,
             source: 'local-upnp',
             playbackState,
