@@ -1475,7 +1475,10 @@ const server = http.createServer(async (req, res) => {
             protocolInfo: didl ? didl.protocolInfo : null,
             currentPalette: cachedCurrentPalette || [],
             nextPalette: cachedNextPalette || []
-          });
+          };
+          statusCache = statusPayload;
+          statusCacheAt = Date.now();
+          sendJson(res, statusPayload);
         } catch (err) {
           log.error(`❌ Sonos status error: ${err.message}`);
           sendJson(res, { ok: false, error: err.message }, 502);
