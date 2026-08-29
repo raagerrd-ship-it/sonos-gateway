@@ -801,6 +801,7 @@ async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } 
 }
 
 async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
+  refreshStatusCacheSoon(); // något ändrat → uppdatera status-cachen direkt
   try {
     const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
       soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
@@ -1099,6 +1100,32 @@ function stopPositionBroadcast() {
   if (positionBroadcastTimer) { clearInterval(positionBroadcastTimer); positionBroadcastTimer = null; }
 }
 
+// ============= /api/status — alltid-färsk cache =============
+let statusCache = null;
+let statusCacheAt = 0;
+let statusRefreshInFlight = false;
+let statusRefreshTimer = null;
+const STATUS_REFRESH_DEBOUNCE_MS = 150;
+
+function refreshStatusCacheSoon() {
+  if (statusRefreshTimer) return;
+  statusRefreshTimer = setTimeout(() => {
+    statusRefreshTimer = null;
+    if (statusRefreshInFlight) return;
+    statusRefreshInFlight = true;
+    const req = http.get(
+      { host: '127.0.0.1', port: ENGINE_PORT, path: '/api/status?fresh=1', timeout: 8000 },
+      (r) => { r.resume(); r.on('end', () => { statusRefreshInFlight = false; }); });
+    req.on('error', () => { statusRefreshInFlight = false; });
+    req.on('timeout', () => { try { req.destroy(); } catch (e) {} statusRefreshInFlight = false; });
+  }, STATUS_REFRESH_DEBOUNCE_MS);
+}
+
+// Periodisk uppdatering — UPnP-events fyrar bara vid förändring, så de räcker
+// inte för att hålla cachen aktuell vid stabil uppspelning.
+const STATUS_PERIODIC_MS = 2000;
+setInterval(() => { refreshStatusCacheSoon(); }, STATUS_PERIODIC_MS).unref?.();
+
 function broadcastSSE(data) {
   const msg = `data: ${JSON.stringify(data)}\n\n`;
   sonosEventClients = sonosEventClients.filter(client => {
@@ -1365,6 +1392,13 @@ const server = http.createServer(async (req, res) => {
       
       // GET /api/status (alias: /api/sonos — bakåtkompatibel)
       if (req.method === 'GET' && (pathname === '/api/status' || pathname === '/api/sonos')) {
+        // Alltid cachat svar om det finns — ingen TTL. Cachen hålls färsk av
+        // refreshStatusCacheSoon(). ?fresh=1 gör den fulla SOAP-hämtningen.
+        const wantFresh = url.searchParams && url.searchParams.get('fresh') === '1';
+        if (!wantFresh && statusCache) {
+          sendJson(res, { ...statusCache, cached: true, cacheAgeMs: Date.now() - statusCacheAt });
+          return;
+        }
         try {
           const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
             soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
@@ -1416,7 +1450,7 @@ const server = http.createServer(async (req, res) => {
           const { nextTrackName, nextArtistName, nextAlbumArtUri } = await resolveNextTrack(nextMeta, trackNumber, nrTracks);
           const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
           
-          sendJson(res, {
+          const statusPayload = {
             ok: true,
             source: 'local-upnp',
             playbackState,
@@ -1441,7 +1475,10 @@ const server = http.createServer(async (req, res) => {
             protocolInfo: didl ? didl.protocolInfo : null,
             currentPalette: cachedCurrentPalette || [],
             nextPalette: cachedNextPalette || []
-          });
+          };
+          statusCache = statusPayload;
+          statusCacheAt = Date.now();
+          sendJson(res, statusPayload);
         } catch (err) {
           log.error(`❌ Sonos status error: ${err.message}`);
           sendJson(res, { ok: false, error: err.message }, 502);
