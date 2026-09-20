@@ -713,6 +713,11 @@ function cloudPushPosition(positionData) {
 }
 
 // ── Generisk push-funktion ──
+// Keep-alive mot molnet: positionspushen går var 3:e sekund, och utan agent blev
+// varje push en ny TLS-handskakning (mätt 2026-09-20: största kvarvarande CPU-posten).
+const cloudAgentHttps = new https.Agent({ keepAlive: true, maxSockets: 2, keepAliveMsecs: 15000 });
+const cloudAgentHttp = new http.Agent({ keepAlive: true, maxSockets: 2, keepAliveMsecs: 15000 });
+
 function doCloudPush(url, payload, label, meta = null) {
   const body = JSON.stringify(payload);
   const parsed = new URL(url);
@@ -730,6 +735,7 @@ function doCloudPush(url, payload, label, meta = null) {
       'Content-Length': Buffer.byteLength(body),
     },
     timeout: 10000,
+    agent: isHttps ? cloudAgentHttps : cloudAgentHttp,
   };
   const lib = isHttps ? https : http;
   const req = lib.request(options, (res) => {
