@@ -6,6 +6,175 @@ const https = require('https');
 const os = require('os');
 const { discoverSonos, discoverRooms, fetchZoneTopology } = require('./discover');
 const { extractPalette, pushHueHistory, getHueHistory, clearHueHistory } = require('./palette');
+
+// [ALBUMART-UPLOAD] 2026-09-18 — omslaget skickas som base64 till molnet.
+// Molnet (sonos-bridge-push) kan inte nå högtalarens LAN-URL (http://<sonos>:1400/getaa…),
+// så TV-bakgrunden blev tom. Kontrakt från Lovable: `albumArtBase64` (nuvarande låt) och
+// `nextAlbumArtBase64` (valfritt) i SAMMA anrop som låtinfon, JPEG som data-URL.
+// Bilden hämtas en gång per omslags-URI, PNG kodas om till JPEG, cache 4 poster.
+// Av: "cloudPushAlbumArt": false i settings.json.
+const albumArtJpeg = require('jpeg-js');
+const { PNG: AlbumArtPNG } = require('pngjs');
+const ALBUMART_MAX_BYTES = 512 * 1024;
+const ALBUMART_TIMEOUT_MS = 8000;
+const ALBUMART_CACHE_MAX = 4;
+const albumArtB64Cache = new Map();   // rawUri → data-URL
+const albumArtInFlight = new Map();   // rawUri → Promise
+
+// Kvittens (Lovable 2026-09-18): svaret på varje state-push bär need_album_art /
+// need_next_album_art / ack_track / ack_next_track. Regel: skicka bilden bara när
+// senaste svaret sa need=true, när omslaget bytt sedan kvittensen, eller när förra
+// pushen gick fel (nät/timeout/inget svar). En bild per låt i stället för en per push.
+const albumArtSync = {
+  needArt: true, needNext: true,          // senaste svarets need_* (true tills molnet säger nej)
+  ackedArtUri: null, ackedNextUri: null,  // rå URI vi skickade när molnet svarade need=false
+  lastPushFailed: false,
+  lastAckTrack: null, lastAckNextTrack: null,
+  sentArt: { uri: null, n: 0, warned: false }, sentNext: { uri: null, n: 0, warned: false },   // leveranser molnet SVARAT need=true på, sedan senaste kvittens
+};
+// Skydd mot ett moln som aldrig kvitterar (sett 2026-09-18: need_next_album_art=true efter 3
+// leveranser): efter så här många skickade bilder för samma omslag hålls den inne tills
+// omslaget byter eller en push går fel. Molnet har redan bytesen.
+const ALBUMART_MAX_SENDS = 3;
+let albumArtFollowUpTimer = null;
+
+function albumArtWanted(kind, rawUri) {
+  const need = kind === 'next' ? albumArtSync.needNext : albumArtSync.needArt;
+  const acked = kind === 'next' ? albumArtSync.ackedNextUri : albumArtSync.ackedArtUri;
+  return need || rawUri !== acked || albumArtSync.lastPushFailed;
+}
+
+function albumArtForPush(rawUri, kind) {
+  if (!rawUri || !cloudConfig.albumArt) return null;
+  if (!albumArtWanted(kind, rawUri)) return null;
+  const dataUrl = albumArtB64Cache.get(rawUri);
+  if (!dataUrl) return null;
+  const sent = kind === 'next' ? albumArtSync.sentNext : albumArtSync.sentArt;
+  if (sent.uri !== rawUri) { sent.uri = rawUri; sent.n = 0; sent.warned = false; }
+  // Räknas vid SVARET (albumArtOnCloudReply), inte här — en startskur med flera pushar i luften
+  // samtidigt ska inte kunna slå i taket innan molnet hunnit svara.
+  if (sent.n >= ALBUMART_MAX_SENDS && !albumArtSync.lastPushFailed) {
+    if (!sent.warned) { sent.warned = true; log.warn(`🖼️ [ALBUMART] ${kind}: ${ALBUMART_MAX_SENDS} leveranser utan kvittens — håller inne bilden tills omslaget byter`); }
+    return null;
+  }
+  return dataUrl;
+}
+
+// Molnet sa "behövs" på en push utan bild och vi har den → skicka nu, inte vid nästa händelse.
+// Spärr: bara när pushen som besvarades SAKNADE bilden — annars kan ett moln som alltid
+// svarar need=true skapa en loop. Då bär i stället nästa ordinarie push bilden igen.
+function albumArtFollowUpPush(reason) {
+  if (albumArtFollowUpTimer || !lastSonosEvent) return;
+  albumArtFollowUpTimer = setTimeout(() => {
+    albumArtFollowUpTimer = null;
+    if (!lastSonosEvent) return;
+    const prevSource = lastSonosEvent.source;
+    lastSonosEvent.source = reason;
+    cloudPushState(lastSonosEvent);
+    lastSonosEvent.source = prevSource;
+  }, 250);
+}
+
+function albumArtOnCloudReply(payload, meta, body) {
+  if (!cloudConfig.albumArt) return;
+  let r = null;
+  if (body) { try { r = JSON.parse(body); } catch { r = null; } }
+  if (!r || typeof r !== 'object') {
+    if (!albumArtSync.lastPushFailed) log.warn('🖼️ [ALBUMART] state-push utan kvittens — bilden skickas igen nästa gång');
+    albumArtSync.lastPushFailed = true;
+    return;
+  }
+  albumArtSync.lastPushFailed = false;
+  const before = `${albumArtSync.needArt}/${albumArtSync.needNext}/${albumArtSync.lastAckTrack}/${albumArtSync.lastAckNextTrack}`;
+  if (typeof r.need_album_art === 'boolean') {
+    albumArtSync.needArt = r.need_album_art;
+    if (payload.albumArtBase64 && meta && meta.artUri && meta.artUri === albumArtSync.sentArt.uri) {
+      if (r.need_album_art) albumArtSync.sentArt.n++;   // levererad men inte kvitterad
+      else { albumArtSync.ackedArtUri = meta.artUri; albumArtSync.sentArt.n = 0; albumArtSync.sentArt.warned = false; }
+    }
+  }
+  if (typeof r.need_next_album_art === 'boolean') {
+    albumArtSync.needNext = r.need_next_album_art;
+    if (payload.nextAlbumArtBase64 && meta && meta.nextUri && meta.nextUri === albumArtSync.sentNext.uri) {
+      if (r.need_next_album_art) albumArtSync.sentNext.n++;
+      else { albumArtSync.ackedNextUri = meta.nextUri; albumArtSync.sentNext.n = 0; albumArtSync.sentNext.warned = false; }
+    }
+  }
+  if (r.ack_track !== undefined) albumArtSync.lastAckTrack = r.ack_track;
+  if (r.ack_next_track !== undefined) albumArtSync.lastAckNextTrack = r.ack_next_track;
+  const after = `${albumArtSync.needArt}/${albumArtSync.needNext}/${albumArtSync.lastAckTrack}/${albumArtSync.lastAckNextTrack}`;
+  if (after !== before) log.info(`🖼️ [ALBUMART] kvittens: need_art=${albumArtSync.needArt} need_next=${albumArtSync.needNext} ack_track=${JSON.stringify(r.ack_track ?? null)} ack_next=${JSON.stringify(r.ack_next_track ?? null)}`);
+  const wantsArt = r.need_album_art === true && !payload.albumArtBase64 && meta && meta.artUri
+    && meta.artUri === cachedRawAlbumArtUri && albumArtB64Cache.has(meta.artUri);
+  const wantsNext = r.need_next_album_art === true && !payload.nextAlbumArtBase64 && meta && meta.nextUri
+    && meta.nextUri === cachedRawNextAlbumArtUri && albumArtB64Cache.has(meta.nextUri);
+  if (wantsArt || wantsNext) albumArtFollowUpPush(wantsArt ? 'albumart-requested' : 'next-albumart-requested');
+}
+
+function albumArtDownload(url) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, { timeout: ALBUMART_TIMEOUT_MS }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) { res.resume(); reject(new Error(`HTTP ${res.statusCode}`)); return; }
+      const chunks = []; let total = 0;
+      res.on('data', (c) => {
+        total += c.length;
+        if (total > ALBUMART_MAX_BYTES) { req.destroy(); reject(new Error(`bilden för stor (>${ALBUMART_MAX_BYTES} B)`)); return; }
+        chunks.push(c);
+      });
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.on('error', reject);
+  });
+}
+
+function fetchAlbumArtBase64(rawUri) {
+  if (!rawUri || !cloudConfig.enabled || !cloudConfig.albumArt) return Promise.resolve(null);
+  if (albumArtB64Cache.has(rawUri)) return Promise.resolve(albumArtB64Cache.get(rawUri));
+  if (albumArtInFlight.has(rawUri)) return albumArtInFlight.get(rawUri);
+  const url = rawUri.startsWith('/') ? `http://${SONOS_IP}:1400${rawUri}` : rawUri;
+  const p = (async () => {
+    const buf = await albumArtDownload(url);
+    let jpegBuf;
+    if (buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8) {
+      jpegBuf = buf;
+    } else if (buf.length > 3 && buf[0] === 0x89 && buf[1] === 0x50) {
+      const png = AlbumArtPNG.sync.read(buf);
+      jpegBuf = albumArtJpeg.encode({ data: png.data, width: png.width, height: png.height }, 85).data;
+    } else {
+      throw new Error('okänt bildformat');
+    }
+    const dataUrl = `data:image/jpeg;base64,${jpegBuf.toString('base64')}`;
+    albumArtB64Cache.set(rawUri, dataUrl);
+    while (albumArtB64Cache.size > ALBUMART_CACHE_MAX) albumArtB64Cache.delete(albumArtB64Cache.keys().next().value);
+    log.info(`🖼️ [ALBUMART] hämtat ${buf.length} B → ${Math.round(dataUrl.length / 1024)} kB base64 (${rawUri.substring(0, 60)})`);
+    return dataUrl;
+  })();
+  albumArtInFlight.set(rawUri, p);
+  p.then(() => albumArtInFlight.delete(rawUri), (e) => {
+    albumArtInFlight.delete(rawUri);
+    log.warn(`🖼️ [ALBUMART] hämtning misslyckades: ${e.message} (${rawUri.substring(0, 60)})`);
+  });
+  return p;
+}
+
+// Efter en lyckad hämtning: pusha om tillståndet så bilden följer med.
+// Cache-träff → ingen extra push (ordinarie state-push bär bilden redan).
+function pushAlbumArtWhenReady(rawUri, isNext) {
+  // Cache-träff → ordinarie push bär bilden; redan i luften → första anroparen pushar.
+  if (!rawUri || albumArtB64Cache.has(rawUri) || albumArtInFlight.has(rawUri)) return;
+  fetchAlbumArtBase64(rawUri).then((dataUrl) => {
+    if (!dataUrl || !lastSonosEvent) return;
+    const stillCurrent = isNext ? (rawUri === cachedRawNextAlbumArtUri) : (rawUri === cachedRawAlbumArtUri);
+    if (!stillCurrent) return;
+    const prevSource = lastSonosEvent.source;
+    lastSonosEvent.source = isNext ? 'next-albumart-update' : 'albumart-update';
+    cloudPushState(lastSonosEvent);
+    lastSonosEvent.source = prevSource;
+  }).catch(() => {});
+}
 const spotify = require('./spotify');
 
 // Version — prefer version.json (CI-generated), fallback to package.json
@@ -374,7 +543,6 @@ async function resolveNextTrack(nextMeta, trackNumber, nrTracks) {
 
 let sonosEventClients = [];
 let sonosSubscriptionSID = null;
-let sonosSubscriptionRenewTimer = null;
 let lastSonosEvent = null;
 let sonosIdleDebounceTimer = null;
 let pendingSonosIdleEvent = null;
@@ -462,6 +630,7 @@ function loadCloudConfig() {
     positionUrl: cfg.cloudPushPositionUrl || process.env.CLOUD_PUSH_POSITION_URL || '',
     secret: cfg.cloudPushSecret || process.env.CLOUD_PUSH_SECRET || 'Fasanvagen',
     intervalMs: cfg.cloudPushIntervalMs || parseInt(process.env.CLOUD_PUSH_INTERVAL_MS || '3000'),
+    albumArt: cfg.cloudPushAlbumArt !== false,   // [ALBUMART-UPLOAD] skicka omslaget som base64
   };
 }
 
@@ -511,11 +680,14 @@ function cloudPushState(eventData) {
     groupName: eventData.groupName || null,
     currentPalette: eventData.currentPalette || cachedCurrentPalette || [],
     nextPalette: eventData.nextPalette || cachedNextPalette || [],
+    // [ALBUMART-UPLOAD] molnet kan inte nå högtalarens LAN-URL — bilden följer med
+    albumArtBase64: albumArtForPush(cachedRawAlbumArtUri, 'art'),
+    nextAlbumArtBase64: albumArtForPush(cachedRawNextAlbumArtUri, 'next'),
     source: eventData.source || null,
   };
 
   // State pushes har ingen rate-limit — de sker sällan ändå.
-  doCloudPush(cloudConfig.url, payload, 'state');
+  doCloudPush(cloudConfig.url, payload, 'state', { artUri: cachedRawAlbumArtUri, nextUri: cachedRawNextAlbumArtUri });   // [ALBUMART-UPLOAD]
 }
 
 // ── Position push (minimal payload) ──
@@ -541,7 +713,7 @@ function cloudPushPosition(positionData) {
 }
 
 // ── Generisk push-funktion ──
-function doCloudPush(url, payload, label) {
+function doCloudPush(url, payload, label, meta = null) {
   const body = JSON.stringify(payload);
   const parsed = new URL(url);
   const isHttps = parsed.protocol === 'https:';
@@ -573,8 +745,10 @@ function doCloudPush(url, payload, label) {
         error: isOk ? null : data.substring(0, 80),
         responseBody: data.substring(0, 80),
       };
+      if (label === 'state') albumArtOnCloudReply(payload, meta, isOk ? data : null);   // [ALBUMART-UPLOAD]
       if (isOk) {
         log.debug(`☁️ [CLOUD-${label}] Push OK (${res.statusCode})`);
+        if (payload.albumArtBase64 || payload.nextAlbumArtBase64) log.info(`🖼️ [ALBUMART] push ${label}/${payload.source} OK (${res.statusCode}) ${data.substring(0, 120)}`);   // [ALBUMART-UPLOAD]
       } else {
         log.warn(`☁️ [CLOUD-${label}] Push failed (${res.statusCode}): ${data.substring(0, 200)}`);
       }
@@ -583,11 +757,13 @@ function doCloudPush(url, payload, label) {
   req.on('error', (err) => {
     cloudPushStatus = { lastPushAt: new Date().toISOString(), lastPushType: label, statusCode: null, ok: false, error: err.message, responseBody: null };
     log.error(`☁️ [CLOUD-${label}] Push error: ${err.message}`);
+    if (label === 'state') albumArtOnCloudReply(payload, meta, null);   // [ALBUMART-UPLOAD]
   });
   req.on('timeout', () => {
     req.destroy();
     cloudPushStatus = { lastPushAt: new Date().toISOString(), lastPushType: label, statusCode: null, ok: false, error: 'Timeout', responseBody: null };
     log.warn(`☁️ [CLOUD-${label}] Push timeout`);
+    if (label === 'state') albumArtOnCloudReply(payload, meta, null);   // [ALBUMART-UPLOAD]
   });
   req.write(body);
   req.end();
@@ -624,14 +800,8 @@ function schedulePendingSonosIdle(eventData, meta) {
   }, SONOS_IDLE_DEBOUNCE_MS);
 }
 
-function scheduleSonosTransitionRefresh(refreshCount) {
-  if (refreshCount > SONOS_TRANSITION_MAX_REFRESHES) return;
-  clearSonosTransitionRefresh();
-  sonosTransitionRefreshTimer = setTimeout(() => {
-    sonosTransitionRefreshTimer = null;
-    handleSonosUPnPEvent({ source: 'transition-refresh', refreshCount });
-  }, SONOS_TRANSITION_REFRESH_MS);
-}
+// scheduleSonosTransitionRefresh (pollning 3×700 ms under TRANSITIONING) är borta:
+// Sonos skickar ett nytt event när läget sätter sig.
 
 // Fetch zone group info
 async function fetchZoneGroupInfo() {
@@ -697,174 +867,326 @@ async function reresolveCoordinator() {
   }
 }
 
-// Subscribe to Sonos AVTransport events
-function subscribeSonosEvents() {
-  const networkIP = getNetworkIP();
-  const callbackUrl = `<http://${networkIP}:${PORT}/api/upnp-callback>`;
-  
-  const options = {
-    hostname: SONOS_IP,
-    port: 1400,
-    path: '/MediaRenderer/AVTransport/Event',
-    method: 'SUBSCRIBE',
-    headers: {
-      'CALLBACK': callbackUrl,
-      'NT': 'upnp:event',
-      'TIMEOUT': 'Second-300'
-    },
-    timeout: 5000
-  };
-  
-  const req = http.request(options, (res) => {
-    const sid = res.headers['sid'];
-    if (sid) {
-      sonosSubscriptionSID = sid;
-      sonosSubscribeRetries = 0;
-      log.info(`📡 [SONOS] Subscribed to AVTransport events, SID: ${sid}`);
-      clearTimeout(sonosSubscriptionRenewTimer);
-      sonosSubscriptionRenewTimer = setTimeout(() => renewSonosSubscription(), 240000);
-      log.info(`📡 [SONOS] Fetching full state after (re)subscribe...`);
-      handleSonosUPnPEvent({ source: 'resubscribe' });
-    } else {
-      log.warn('⚠️ [SONOS] Subscribe response missing SID');
-    }
-  });
-  
-  req.on('error', (err) => {
-    log.error(`❌ [SONOS] Subscribe error: ${err.message}`);
-    const retryMs = Math.min(5000 * Math.pow(2, Math.min(sonosSubscribeRetries++, 5)), 120000);
-    log.info(`🔄 [SONOS] Retrying subscribe in ${Math.round(retryMs / 1000)}s...`);
-    if (sonosSubscribeRetries >= 2) reresolveCoordinator().catch(() => {});
-    setTimeout(() => subscribeSonosEvents(), retryMs);
-  });
-  
-  req.on('timeout', () => {
-    req.destroy();
-    log.error('❌ [SONOS] Subscribe timeout');
-    const retryMs = Math.min(5000 * Math.pow(2, Math.min(sonosSubscribeRetries++, 5)), 120000);
-    if (sonosSubscribeRetries >= 2) reresolveCoordinator().catch(() => {});
-    setTimeout(() => subscribeSonosEvents(), retryMs);
-  });
-  
-  req.end();
+
+// ============ Event-först: Sonos pushar, vi räknar (2026-09-20) ============
+//
+// Sonos skickar UPnP-NOTIFY med HELA AVTransport-tillståndet (transportläge, låt,
+// nästa låt, kö-URI, crossfade — allt utom positionen) och hela RenderingControl-
+// tillståndet (volym, mute, bas, diskant, loudness) så fort något ändras, plus ett
+// fullt event direkt efter SUBSCRIBE (uppmätt 2026-09-20: SEQ 0 efter 0,1 s).
+//
+// Gamla motorn kastade kroppen (räknade bara bytes) och gjorde 9 SOAP-anrop per
+// event, 9 var 2:a sekund för statuscachen och 4 varje sekund för positionen:
+// ~290 anrop/min mot högtalaren, ny TCP-anslutning varje gång.
+//
+// Nu: eventen parsas och blir sanningen. Positionen förankras med ETT
+// GetPositionInfo vid play/paus/låtbyte och räknas lokalt däremellan, med
+// omkalibrering var 30:e sekund under uppspelning. Skyddsnät: full SOAP-synk
+// var 5:e minut och om inget event kommit 5 s efter prenumeration.
+
+const POSITION_RESYNC_MS = 30 * 1000;
+const SANITY_SYNC_MS = 5 * 60 * 1000;
+const SUBSCRIBE_TIMEOUT_S = 300;
+const SUBSCRIBE_RENEW_MS = 240 * 1000;
+const NOTIFY_MAX_BYTES = 512 * 1024;
+
+// Tillstånd från eventen
+const avt = {
+  transportState: null, transportStatus: null, playMode: null, crossfade: null,
+  nrTracks: null, trackNumber: null, trackURI: null,
+  trackDurationMs: null, trackDurationStr: null, didl: null,
+  nextTrackURI: null, nextDidl: null,
+  currentURI: null, nextAVTransportURI: null, nextAVTransportURIMetaData: null, playMedium: null,
+  currentSpeed: null, updatedAt: 0, seq: null
+};
+const rc = { volume: null, mute: null, bass: null, treble: null, loudness: null, updatedAt: 0 };
+// Positionsankare: relMs gällde vid anchorAt. Under PLAYING = relMs + förfluten tid.
+const pos = { relMs: null, absTime: null, anchorAt: 0, driftMs: 0, anchors: 0 };
+let lastStateChangeAt = 0;
+let anchorInFlight = null;
+let resyncTimer = null;
+let sanityTimer = null;
+let nextTrackCache = { key: null, value: null };
+const eventStats = { avt: 0, rc: 0, soap: 0, anchors: 0, fullSyncs: 0 };
+
+// Korrekt EN-nivås avkodning: &amp; SIST, annars blir &amp;quot; → " (dubbelavkodat).
+function decodeXmlOnce(str) {
+  return String(str)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
-function renewSonosSubscription() {
-  if (!sonosSubscriptionSID) { subscribeSonosEvents(); return; }
-  
-  const options = {
-    hostname: SONOS_IP,
-    port: 1400,
-    path: '/MediaRenderer/AVTransport/Event',
-    method: 'SUBSCRIBE',
-    headers: { 'SID': sonosSubscriptionSID, 'TIMEOUT': 'Second-300' },
-    timeout: 5000
-  };
-  
-  const req = http.request(options, (res) => {
-    if (res.statusCode === 200) {
-      log.info(`🔄 [SONOS] Subscription renewed`);
-      clearTimeout(sonosSubscriptionRenewTimer);
-      sonosSubscriptionRenewTimer = setTimeout(() => renewSonosSubscription(), 240000);
-    } else {
-      log.warn(`⚠️ [SONOS] Renewal failed (${res.statusCode}), re-subscribing...`);
-      sonosSubscriptionSID = null;
-      subscribeSonosEvents();
-    }
-  });
-  
-  req.on('error', () => { sonosSubscriptionSID = null; setTimeout(() => subscribeSonosEvents(), 5000); });
-  req.on('timeout', () => { req.destroy(); sonosSubscriptionSID = null; setTimeout(() => subscribeSonosEvents(), 5000); });
-  req.end();
-}
-
-// Full status fetch and broadcast
-async function handleSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
-  // Coalesce concurrent triggers — Sonos can fire multiple NOTIFYs in quick
-  // succession (e.g. play+volume+queue), and running 9 SOAP calls in parallel
-  // for each one balloons RSS. Run once, remember if more arrived, then run again.
-  if (sonosUpnpHandlerBusy) {
-    sonosUpnpHandlerPending = true;
-    return;
+// <e:propertyset><e:property><LastChange>&lt;Event ...&gt;</LastChange> → { Namn: val }
+// Värden lämnas som de står i attributet (DIDL är fortfarande escapat en nivå,
+// precis som i SOAP-svaren, så extractDidl/parseTime fungerar oförändrat).
+function parseLastChange(body) {
+  const m = body.match(/<LastChange>([\s\S]*?)<\/LastChange>/);
+  if (!m) return null;
+  const ev = decodeXmlOnce(m[1]);
+  const vars = {};
+  const re = /<([\w:]+)((?:\s+[\w:]+="[^"]*")*)\s*\/?>/g;
+  let mm;
+  while ((mm = re.exec(ev)) !== null) {
+    const name = mm[1];
+    if (name === 'Event' || name === 'InstanceID') continue;
+    const attrs = mm[2] || '';
+    const val = /\sval="([^"]*)"/.exec(attrs);
+    if (!val) continue;
+    const ch = /\schannel="([^"]*)"/.exec(attrs);
+    if (ch && ch[1] !== 'Master') continue;
+    vars[name] = val[1];
   }
+  return vars;
+}
+
+function trackKeyOf(state) {
+  return `${state.trackURI || ''}|${state.trackNumber ?? ''}|${state.didl?.title || ''}|${state.didl?.creator || ''}`;
+}
+
+function currentPositionMs() {
+  if (pos.relMs === null) return null;
+  if (avt.transportState !== 'PLAYING') return pos.relMs;
+  let p = pos.relMs + (Date.now() - pos.anchorAt);
+  if (avt.trackDurationMs) p = Math.min(p, avt.trackDurationMs);
+  return p;
+}
+
+// ETT GetPositionInfo — sätter ankaret. Fyller också luckor (låt-URI, DIDL) om
+// eventet saknade dem.
+function anchorPosition(why) {
+  if (anchorInFlight) return anchorInFlight;
+  anchorInFlight = (async () => {
+    try {
+      const xml = await soapRequest(SOAP_GET_POSITION, 'GetPositionInfo');
+      const relMs = parseTime(extractTag(xml, 'RelTime'));
+      const durMs = parseTime(extractTag(xml, 'TrackDuration'));
+      const at = Date.now();
+      if (relMs !== null) {
+        const predicted = currentPositionMs();
+        if (why === 'omkalibrering' && predicted !== null && pos.anchorAt) pos.driftMs = relMs - predicted;   // bara mätbart mellan två ankare på samma låt
+        pos.relMs = relMs;
+        pos.anchorAt = at;
+        pos.absTime = extractTag(xml, 'AbsTime');
+        pos.anchors++;
+        eventStats.anchors++;
+        if (durMs !== null) { avt.trackDurationMs = durMs; avt.trackDurationStr = extractTag(xml, 'TrackDuration'); }
+        if (!avt.trackURI) avt.trackURI = extractTag(xml, 'TrackURI');
+        if (avt.trackNumber == null) { const t = extractTag(xml, 'Track'); if (t) avt.trackNumber = parseInt(t, 10); }
+        if (!avt.didl) { const d = extractDidl(xml); if (d) avt.didl = d; }
+        if (debugLogging) log.info(`[POS] förankrad (${why}): ${relMs} ms, drift ${pos.driftMs} ms`);
+      }
+    } catch (e) {
+      log.debug(`[POS] förankring misslyckades (${why}): ${e.message}`);
+    } finally {
+      anchorInFlight = null;
+    }
+  })();
+  return anchorInFlight;
+}
+
+function scheduleResync() {
+  if (resyncTimer) clearTimeout(resyncTimer);
+  resyncTimer = setTimeout(async () => {
+    resyncTimer = null;
+    if (avt.transportState === 'PLAYING') {
+      await anchorPosition('omkalibrering');
+      if (Math.abs(pos.driftMs) > 1500) log.warn(`⚠️ [POS] drift ${pos.driftMs} ms vid omkalibrering`);
+    }
+    scheduleResync();
+  }, POSITION_RESYNC_MS);
+}
+
+function applyRcVars(vars) {
+  let changed = false;
+  const setInt = (k, name) => { if (name in vars) { const v = parseInt(vars[name], 10); if (!isNaN(v) && rc[k] !== v) { rc[k] = v; changed = true; } } };
+  const setBool = (k, name) => { if (name in vars) { const v = vars[name] === '1'; if (rc[k] !== v) { rc[k] = v; changed = true; } } };
+  setInt('volume', 'Volume'); setBool('mute', 'Mute'); setInt('bass', 'Bass'); setInt('treble', 'Treble'); setBool('loudness', 'Loudness');
+  if (changed) { rc.updatedAt = Date.now(); lastStateChangeAt = rc.updatedAt; }
+  return changed;
+}
+
+function applyAvtVars(vars) {
+  const prevState = avt.transportState;
+  const prevTrackKey = trackKeyOf(avt);
+  const prevUri = avt.currentURI;
+  const frozen = currentPositionMs();           // före mutation: var vi stod vid pausen
+
+  const setStr = (k, name) => { if (name in vars) avt[k] = vars[name] || null; };
+  setStr('transportState', 'TransportState');
+  setStr('transportStatus', 'TransportStatus');
+  setStr('playMode', 'CurrentPlayMode');
+  if ('CurrentCrossfadeMode' in vars) avt.crossfade = vars.CurrentCrossfadeMode === '1';
+  if ('NumberOfTracks' in vars) { const n = parseInt(vars.NumberOfTracks, 10); avt.nrTracks = isNaN(n) ? null : n; }
+  if ('CurrentTrack' in vars) { const n = parseInt(vars.CurrentTrack, 10); avt.trackNumber = isNaN(n) ? null : n; }
+  setStr('trackURI', 'CurrentTrackURI');
+  if ('CurrentTrackDuration' in vars) { avt.trackDurationStr = vars.CurrentTrackDuration || null; avt.trackDurationMs = parseTime(vars.CurrentTrackDuration); }
+  if ('CurrentTrackMetaData' in vars) avt.didl = vars.CurrentTrackMetaData ? (extractDidl(vars.CurrentTrackMetaData) || null) : null;
+  setStr('nextTrackURI', 'r:NextTrackURI');
+  if ('r:NextTrackMetaData' in vars) avt.nextDidl = vars['r:NextTrackMetaData'] ? (extractDidl(vars['r:NextTrackMetaData']) || null) : null;
+  setStr('currentURI', 'AVTransportURI');
+  setStr('nextAVTransportURI', 'NextAVTransportURI');
+  setStr('nextAVTransportURIMetaData', 'NextAVTransportURIMetaData');
+  setStr('playMedium', 'PlaybackStorageMedium');
+  setStr('currentSpeed', 'TransportPlaySpeed');
+  avt.updatedAt = Date.now();
+  lastStateChangeAt = avt.updatedAt;
+
+  const trackChanged = trackKeyOf(avt) !== prevTrackKey;
+  const stateChanged = avt.transportState !== prevState;
+  if (trackChanged) {
+    pos.relMs = 0; pos.anchorAt = Date.now();
+    nextTrackCache = { key: null, value: null };
+  } else if (stateChanged && prevState === 'PLAYING' && frozen !== null) {
+    pos.relMs = frozen; pos.anchorAt = Date.now();   // frys där vi stod
+  }
+  return { trackChanged, stateChanged, uriChanged: avt.currentURI !== prevUri };
+}
+
+// Nästa låt: från eventet (r:NextTrackMetaData). Saknas den (radio, kö-slut)
+// görs Browse-uppslaget EN gång per låt, inte var 2:a sekund som förut.
+async function resolveNextFromState() {
+  if (avt.nextDidl) {
+    const d = avt.nextDidl;
+    let rawNextAlbumArtUri = null, nextAlbumArtUri = null;
+    if (d.albumArtURI) {
+      rawNextAlbumArtUri = d.albumArtURI.replace(/&amp;/g, '&');
+      nextAlbumArtUri = rawNextAlbumArtUri.startsWith('/') ? `http://${SONOS_IP}:1400${rawNextAlbumArtUri}` : rawNextAlbumArtUri;
+    }
+    return { nextTrackName: d.title || null, nextArtistName: d.creator || null, nextAlbumArtUri, rawNextAlbumArtUri };
+  }
+  const key = `${avt.currentURI}|${avt.trackNumber}|${avt.nrTracks}|${avt.nextAVTransportURIMetaData ? 1 : 0}`;
+  if (nextTrackCache.key === key) return nextTrackCache.value;
+  const value = await resolveNextTrack(avt.nextAVTransportURIMetaData, avt.trackNumber, avt.nrTracks);
+  nextTrackCache = { key, value };
+  return value;
+}
+
+function albumArtUrlFromDidl(didl) {
+  if (!didl || !didl.albumArtURI) return null;
+  const clean = didl.albumArtURI.replace(/&amp;/g, '&');
+  return clean.startsWith('/') ? `http://${SONOS_IP}:1400${clean}` : clean;
+}
+
+// Full SOAP-synk (9 anrop) — skyddsnät och ?fresh=1. Skriver in i samma tillstånd
+// som eventen så att allt nedströms är oförändrat.
+async function fullSyncFromSoap(source) {
+  eventStats.fullSyncs++;
+  const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
+    soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
+    soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
+    soapRequest(SOAP_GET_MEDIA, 'GetMediaInfo'),
+    soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
+    soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null),
+    soapRequest(SOAP_GET_BASS, 'GetBass', RC_PATH, RC_SERVICE).catch(() => null),
+    soapRequest(SOAP_GET_TREBLE, 'GetTreble', RC_PATH, RC_SERVICE).catch(() => null),
+    soapRequest(SOAP_GET_LOUDNESS, 'GetLoudness', RC_PATH, RC_SERVICE).catch(() => null),
+    soapRequest(SOAP_GET_CROSSFADE, 'GetCrossfadeMode').catch(() => null)
+  ]);
+  const vars = {};
+  const put = (name, xml, tag) => { if (!xml) return; const v = extractTag(xml, tag); if (v !== null) vars[name] = v; };
+  put('TransportState', transXml, 'CurrentTransportState');
+  put('TransportStatus', transXml, 'CurrentTransportStatus');
+  put('TransportPlaySpeed', transXml, 'CurrentSpeed');
+  put('NumberOfTracks', mediaXml, 'NrTracks');
+  put('AVTransportURI', mediaXml, 'CurrentURI');
+  put('NextAVTransportURI', mediaXml, 'NextAVTransportURI');
+  put('NextAVTransportURIMetaData', mediaXml, 'NextAVTransportURIMetaData');
+  put('PlaybackStorageMedium', mediaXml, 'PlayMedium');
+  put('CurrentTrack', posXml, 'Track');
+  put('CurrentTrackURI', posXml, 'TrackURI');
+  put('CurrentTrackDuration', posXml, 'TrackDuration');
+  put('CurrentTrackMetaData', posXml, 'TrackMetaData');
+  if (crossfadeXml) { const cf = extractTag(crossfadeXml, 'CrossfadeMode'); if (cf !== null) vars.CurrentCrossfadeMode = cf; }
+  if (debugLogging) {
+    log.info(`[RAW] posXml (first 500): ${posXml?.substring(0, 500)}`);
+    log.info(`[RAW] mediaXml (first 500): ${mediaXml?.substring(0, 500)}`);
+  }
+  // Positionen från samma svar blir ankaret
+  applyAvtVars(vars);
+  const relMs = parseTime(extractTag(posXml, 'RelTime'));
+  if (relMs !== null) { pos.relMs = relMs; pos.anchorAt = Date.now(); pos.absTime = extractTag(posXml, 'AbsTime'); pos.anchors++; }
+  const rcVars = {};
+  const putRc = (name, xml, tag) => { if (!xml) return; const v = extractTag(xml, tag); if (v !== null) rcVars[name] = v; };
+  putRc('Volume', volXml, 'CurrentVolume'); putRc('Mute', muteXml, 'CurrentMute');
+  putRc('Bass', bassXml, 'CurrentBass'); putRc('Treble', trebleXml, 'CurrentTreble'); putRc('Loudness', loudnessXml, 'CurrentLoudness');
+  applyRcVars(rcVars);
+  await composeAndEmit(source, { trackChanged: true, stateChanged: true, uriChanged: true });
+}
+
+// Bakåtkompatibel ingång (anropas av config-byte m.m.): full synk, koalescerad.
+async function handleSonosUPnPEvent({ source = 'full-sync' } = {}) {
+  if (sonosUpnpHandlerBusy) { sonosUpnpHandlerPending = true; return; }
   sonosUpnpHandlerBusy = true;
   try {
-    await _runSonosUPnPEvent({ source, refreshCount });
+    await fullSyncFromSoap(source);
+  } catch (err) {
+    log.error(`❌ [SONOS] Full synk misslyckades (${source}): ${err.message}`);
   } finally {
     sonosUpnpHandlerBusy = false;
-    if (sonosUpnpHandlerPending) {
-      sonosUpnpHandlerPending = false;
-      // Re-run once to capture the latest state
-      setImmediate(() => handleSonosUPnPEvent({ source: 'coalesced' }));
-    }
+    if (sonosUpnpHandlerPending) { sonosUpnpHandlerPending = false; setImmediate(() => handleSonosUPnPEvent({ source: 'coalesced' })); }
   }
 }
 
-async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = {}) {
-  refreshStatusCacheSoon(); // något ändrat → uppdatera status-cachen direkt
+function composeEventData(source, next) {
+  const didl = avt.didl;
+  return {
+    ok: true,
+    source,
+    playbackState: getSonosPlaybackState(avt.transportState),
+    positionMillis: currentPositionMs(),
+    durationMillis: avt.trackDurationMs,
+    trackName: didl ? didl.title : null,
+    artistName: didl ? didl.creator : null,
+    albumName: didl ? didl.album : null,
+    albumArtUri: albumArtUrlFromDidl(didl),
+    nextTrackName: next.nextTrackName,
+    nextArtistName: next.nextArtistName,
+    nextAlbumArtUri: next.nextAlbumArtUri,
+    volume: rc.volume,
+    mute: rc.mute,
+    bass: rc.bass,
+    treble: rc.treble,
+    loudness: rc.loudness,
+    mediaType: didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track',
+    trackNumber: avt.trackNumber,
+    trackURI: avt.trackURI,
+    absTime: pos.absTime,
+    currentSpeed: avt.currentSpeed,
+    currentTransportStatus: avt.transportStatus,
+    crossfade: avt.crossfade,
+    nrTracks: avt.nrTracks,
+    currentURI: avt.currentURI,
+    nextAVTransportURI: avt.nextAVTransportURI,
+    playMedium: avt.playMedium,
+    streamContent: didl ? didl.streamContent : null,
+    radioShowMd: didl ? didl.radioShowMd : null,
+    originalTrackNumber: didl?.originalTrackNumber ? parseInt(didl.originalTrackNumber, 10) : null,
+    protocolInfo: didl ? didl.protocolInfo : null,
+    groupId: cachedGroupId,
+    groupName: cachedGroupName,
+    currentPalette: cachedCurrentPalette,
+    nextPalette: cachedNextPalette,
+    timestamp: Date.now()
+  };
+}
+
+// Allt som tidigare hände efter de nio SOAP-anropen: omslag, palett, Spotify,
+// zon, idle-debounce och utsändning. Oförändrad logik, ny datakälla.
+async function composeAndEmit(source, { trackChanged = false, stateChanged = false, uriChanged = false } = {}) {
   try {
-    const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
-      soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
-      soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
-      soapRequest(SOAP_GET_MEDIA, 'GetMediaInfo'),
-      soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
-      soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null),
-      soapRequest(SOAP_GET_BASS, 'GetBass', RC_PATH, RC_SERVICE).catch(() => null),
-      soapRequest(SOAP_GET_TREBLE, 'GetTreble', RC_PATH, RC_SERVICE).catch(() => null),
-      soapRequest(SOAP_GET_LOUDNESS, 'GetLoudness', RC_PATH, RC_SERVICE).catch(() => null),
-      soapRequest(SOAP_GET_CROSSFADE, 'GetCrossfadeMode').catch(() => null)
-    ]);
-    
-    const parseIntTag = (xml, tag) => { if (!xml) return null; const v = extractTag(xml, tag); return v !== null ? parseInt(v, 10) : null; };
-    const parseBoolTag = (xml, tag) => { if (!xml) return null; const v = extractTag(xml, tag); return v !== null ? v === '1' : null; };
-    
-    const volume = parseIntTag(volXml, 'CurrentVolume');
-    const mute = parseBoolTag(muteXml, 'CurrentMute');
-    const bass = parseIntTag(bassXml, 'CurrentBass');
-    const treble = parseIntTag(trebleXml, 'CurrentTreble');
-    const loudness = parseBoolTag(loudnessXml, 'CurrentLoudness');
-    let crossfade = null;
-    if (crossfadeXml) { const cfStr = extractTag(crossfadeXml, 'CrossfadeMode'); if (cfStr !== null) crossfade = cfStr === '1'; }
-    
-    const relTime = extractTag(posXml, 'RelTime');
-    const trackDuration = extractTag(posXml, 'TrackDuration');
-    const trackNumber = extractTag(posXml, 'Track');
-    const trackURI = extractTag(posXml, 'TrackURI');
-    const absTime = extractTag(posXml, 'AbsTime');
-    const didl = extractDidl(posXml);
-    const transportState = extractTag(transXml, 'CurrentTransportState');
-    const currentTransportStatus = extractTag(transXml, 'CurrentTransportStatus');
-    const currentSpeed = extractTag(transXml, 'CurrentSpeed');
-    
-    const playbackState = getSonosPlaybackState(transportState);
-    let albumArtUri = null;
-    if (debugLogging) {
-      log.info(`[RAW] posXml (first 500): ${posXml?.substring(0, 500)}`);
-      log.info(`[RAW] mediaXml (first 500): ${mediaXml?.substring(0, 500)}`);
-      log.info(`[RAW] DIDL parsed: ${didl ? JSON.stringify(didl) : 'NULL'}`);
-    }
-    if (didl && didl.albumArtURI) {
-      const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
-      albumArtUri = cleanUri.startsWith('/')
-        ? `http://${SONOS_IP}:1400${cleanUri}`
-        : cleanUri;
-    }
-    
-    const nrTracks = extractTag(mediaXml, 'NrTracks');
-    const currentURI = extractTag(mediaXml, 'CurrentURI');
-    const nextAVTransportURI = extractTag(mediaXml, 'NextAVTransportURI');
-    const playMedium = extractTag(mediaXml, 'PlayMedium');
-    const nextMeta = extractTag(mediaXml, 'NextAVTransportURIMetaData');
-    const { nextTrackName, nextArtistName, nextAlbumArtUri, rawNextAlbumArtUri } = await resolveNextTrack(nextMeta, trackNumber, nrTracks);
-    
+    const next = await resolveNextFromState();
+    const didl = avt.didl;
+
     const previousRawAlbumArtUri = cachedRawAlbumArtUri;
     cachedRawAlbumArtUri = (didl?.albumArtURI || cachedRawAlbumArtUri || '').replace(/&amp;/g, '&');
-    cachedRawNextAlbumArtUri = (rawNextAlbumArtUri || cachedRawNextAlbumArtUri || '').replace(/&amp;/g, '&');
-    
+    cachedRawNextAlbumArtUri = (next.rawNextAlbumArtUri || cachedRawNextAlbumArtUri || '').replace(/&amp;/g, '&');
+
     // Extract palette on album art change (new track)
     if (cachedRawAlbumArtUri && cachedRawAlbumArtUri !== previousRawAlbumArtUri) {
-      // Promote pre-fetched next palette → current if it matches the new track,
-      // otherwise clear current immediately so we never leak the previous track's colors.
+      pushAlbumArtWhenReady(cachedRawAlbumArtUri, false);   // [ALBUMART-UPLOAD]
       if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri === cachedRawAlbumArtUri && cachedNextPalette.length > 0) {
         cachedCurrentPalette = cachedNextPalette;
         try { if (cachedCurrentPalette[0]) pushHueHistory(cachedCurrentPalette[0]); } catch {}
@@ -880,7 +1202,6 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
         extractPalette(targetUri, SONOS_IP, log)
           .then(palette => {
             paletteExtractionInProgress = false;
-            // Stale-check: if the track changed again while we were extracting, drop this result.
             if (targetUri !== cachedRawAlbumArtUri) {
               log.info('🎨 [PALETTE] Discarded stale extraction (track changed)');
               return;
@@ -899,11 +1220,16 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
           .catch(() => { paletteExtractionInProgress = false; });
       }
     }
-    
-    // Pre-fetch palette for next track
-    if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri !== cachedRawAlbumArtUri) {
-      extractPalette(cachedRawNextAlbumArtUri, SONOS_IP, log)
+
+    // Pre-fetch palette for next track (bara när nästa omslag är nytt)
+    if (cachedRawNextAlbumArtUri && cachedRawNextAlbumArtUri !== cachedRawAlbumArtUri && cachedRawNextAlbumArtUri !== lastPrefetchedNextArtUri) {
+      lastPrefetchedNextArtUri = cachedRawNextAlbumArtUri;
+      pushAlbumArtWhenReady(cachedRawNextAlbumArtUri, true);   // [ALBUMART-UPLOAD]
+      const targetNext = cachedRawNextAlbumArtUri;
+      extractPalette(targetNext, SONOS_IP, log)
         .then(palette => {
+          if (!palette || palette.length === 0) return;           // misslyckad hämtning ska inte nolla en fungerande palett
+          if (targetNext !== cachedRawNextAlbumArtUri) return;
           cachedNextPalette = palette;
           log.info('🎨 [PALETTE] Next track palette pre-cached');
           if (lastSonosEvent) {
@@ -917,8 +1243,8 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
         })
         .catch(() => {});
     }
-    
-    fetchZoneGroupInfo().catch(() => {});
+
+    if (uriChanged || !cachedGroupId) fetchZoneGroupInfo().catch(() => {});
 
     // Spotify audio-features on track change (non-blocking)
     const spTrackName = didl ? didl.title : null;
@@ -930,169 +1256,197 @@ async function _runSonosUPnPEvent({ source = 'upnp-event', refreshCount = 0 } = 
         spotify.onTrackChange(spArtistName, spTrackName).catch(e => log.warn(`spotify.onTrackChange failed: ${e.message}`));
       }
     }
-    
-    const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
-    cachedMediaType = mediaType;
-    cachedBass = bass;
-    cachedTreble = treble;
-    cachedLoudness = loudness;
-    cachedCrossfade = crossfade;
-    
-    const eventData = {
-      ok: true,
-      source,
-      playbackState,
-      positionMillis: parseTime(relTime),
-      durationMillis: parseTime(trackDuration),
-      trackName: didl ? didl.title : null,
-      artistName: didl ? didl.creator : null,
-      albumName: didl ? didl.album : null,
-      albumArtUri,
-      nextTrackName,
-      nextArtistName,
-      nextAlbumArtUri,
-      volume,
-      mute,
-      bass,
-      treble,
-      loudness,
-      mediaType,
-      trackNumber: trackNumber ? parseInt(trackNumber, 10) : null,
-      trackURI,
-      absTime,
-      currentSpeed,
-      currentTransportStatus,
-      crossfade,
-      nrTracks: nrTracks ? parseInt(nrTracks, 10) : null,
-      currentURI,
-      nextAVTransportURI,
-      playMedium,
-      streamContent: didl ? didl.streamContent : null,
-      radioShowMd: didl ? didl.radioShowMd : null,
-      originalTrackNumber: didl?.originalTrackNumber ? parseInt(didl.originalTrackNumber, 10) : null,
-      protocolInfo: didl ? didl.protocolInfo : null,
-      groupId: cachedGroupId,
-      groupName: cachedGroupName,
-      currentPalette: cachedCurrentPalette,
-      nextPalette: cachedNextPalette,
-      timestamp: Date.now()
-    };
+
+    const eventData = composeEventData(source, next);
+    const transportState = avt.transportState;
 
     if (transportState === 'PLAYING' || transportState === 'PAUSED_PLAYBACK') {
       cancelPendingSonosIdle(`received ${transportState}`);
-      clearSonosTransitionRefresh();
       emitSonosEvent(eventData);
       return;
     }
 
     if (isSonosTransitionState(transportState) || isSonosIdleCandidateTransportState(transportState)) {
+      // TRANSITIONING/STOPPED mellan låtar: nästa event (PLAYING) kommer av sig
+      // självt — debouncen skyddar mot att IDLE hinner sändas emellan.
       const idleReason = classifySonosIdleReason(transportState, eventData);
       schedulePendingSonosIdle(eventData, { reason: idleReason, transportState });
-      if (idleReason === 'transition' && refreshCount < SONOS_TRANSITION_MAX_REFRESHES) {
-        scheduleSonosTransitionRefresh(refreshCount + 1);
-      }
       return;
     }
 
     cancelPendingSonosIdle(`received ${transportState || 'UNKNOWN'}`);
-    clearSonosTransitionRefresh();
     emitSonosEvent(eventData);
   } catch (err) {
     log.error(`❌ [SONOS] Event handler error: ${err.message}`);
   }
 }
+let lastPrefetchedNextArtUri = null;
 
-// Position broadcast
+// NOTIFY-kroppar → tillstånd
+let avtEventChain = Promise.resolve();
+function onAvtNotify(body, seq) {
+  eventStats.avt++;
+  const vars = parseLastChange(body);
+  if (!vars) { log.warn('⚠️ [SONOS] AVTransport-event utan LastChange — full synk'); handleSonosUPnPEvent({ source: 'notify-unparsed' }); return; }
+  avt.seq = seq;
+  // Serialisera: ett event i taget, i ordning
+  avtEventChain = avtEventChain.then(async () => {
+    const change = applyAvtVars(vars);
+    if (debugLogging) log.info(`[EVENT] AVT seq=${seq} state=${avt.transportState} track=${avt.trackNumber}/${avt.nrTracks} "${avt.didl?.title || ''}" changed=${JSON.stringify(change)}`);
+    if (change.trackChanged || change.stateChanged || pos.anchorAt === 0) {
+      await anchorPosition(change.trackChanged ? 'låtbyte' : (change.stateChanged ? avt.transportState : 'första'));
+    }
+    await composeAndEmit('upnp-event', change);
+  }).catch((e) => log.error(`❌ [SONOS] AVT-event: ${e.message}`));
+}
+
+function onRcNotify(body) {
+  eventStats.rc++;
+  const vars = parseLastChange(body);
+  if (!vars) return;
+  const changed = applyRcVars(vars);
+  if (debugLogging) log.info(`[EVENT] RC volume=${rc.volume} mute=${rc.mute} bass=${rc.bass} treble=${rc.treble} loudness=${rc.loudness} changed=${changed}`);
+  if (!changed || avt.updatedAt === 0) return;
+  avtEventChain = avtEventChain.then(() => composeAndEmit('rc-event')).catch(() => {});
+}
+
+// ============ UPnP-prenumerationer (AVTransport + RenderingControl) ============
+
+const subs = {
+  avt: { label: 'AVTransport', path: '/MediaRenderer/AVTransport/Event', callback: '/api/upnp-callback', sid: null, renewTimer: null, retries: 0 },
+  rc:  { label: 'RenderingControl', path: '/MediaRenderer/RenderingControl/Event', callback: '/api/upnp-callback-rc', sid: null, renewTimer: null, retries: 0 }
+};
+
+function subscribeService(key) {
+  const sub = subs[key];
+  const networkIP = getNetworkIP();
+  const req = http.request({
+    hostname: SONOS_IP, port: 1400, path: sub.path, method: 'SUBSCRIBE', timeout: 5000,
+    headers: { 'CALLBACK': `<http://${networkIP}:${PORT}${sub.callback}>`, 'NT': 'upnp:event', 'TIMEOUT': `Second-${SUBSCRIBE_TIMEOUT_S}` }
+  }, (res) => {
+    res.resume();
+    const sid = res.headers['sid'];
+    if (sid) {
+      sub.sid = sid;
+      sub.retries = 0;
+      if (key === 'avt') { sonosSubscriptionSID = sid; sonosSubscribeRetries = 0; }
+      log.info(`📡 [SONOS] Prenumererar på ${sub.label}, SID ${sid}`);
+      clearTimeout(sub.renewTimer);
+      sub.renewTimer = setTimeout(() => renewService(key), SUBSCRIBE_RENEW_MS);
+    } else {
+      log.warn(`⚠️ [SONOS] SUBSCRIBE ${sub.label} utan SID (HTTP ${res.statusCode})`);
+      scheduleSubscribeRetry(key, 'inget SID');
+    }
+  });
+  req.on('error', (err) => scheduleSubscribeRetry(key, err.message));
+  req.on('timeout', () => { req.destroy(); scheduleSubscribeRetry(key, 'timeout'); });
+  req.end();
+}
+
+function scheduleSubscribeRetry(key, why) {
+  const sub = subs[key];
+  const retryMs = Math.min(5000 * Math.pow(2, Math.min(sub.retries++, 5)), 120000);
+  if (key === 'avt') { sonosSubscriptionSID = null; sonosSubscribeRetries = sub.retries; }
+  log.error(`❌ [SONOS] SUBSCRIBE ${sub.label} misslyckades (${why}) — försöker om ${Math.round(retryMs / 1000)} s`);
+  if (sub.retries >= 2) reresolveCoordinator().catch(() => {});
+  setTimeout(() => subscribeService(key), retryMs);
+}
+
+function renewService(key) {
+  const sub = subs[key];
+  if (!sub.sid) { subscribeService(key); return; }
+  const req = http.request({
+    hostname: SONOS_IP, port: 1400, path: sub.path, method: 'SUBSCRIBE', timeout: 5000,
+    headers: { 'SID': sub.sid, 'TIMEOUT': `Second-${SUBSCRIBE_TIMEOUT_S}` }
+  }, (res) => {
+    res.resume();
+    if (res.statusCode === 200) {
+      log.debug(`🔄 [SONOS] ${sub.label}-prenumerationen förnyad`);
+      clearTimeout(sub.renewTimer);
+      sub.renewTimer = setTimeout(() => renewService(key), SUBSCRIBE_RENEW_MS);
+    } else {
+      log.warn(`⚠️ [SONOS] Förnyelse av ${sub.label} gav ${res.statusCode} — prenumererar om`);
+      sub.sid = null;
+      if (key === 'avt') sonosSubscriptionSID = null;
+      subscribeService(key);
+    }
+  });
+  req.on('error', () => { sub.sid = null; if (key === 'avt') sonosSubscriptionSID = null; setTimeout(() => subscribeService(key), 5000); });
+  req.on('timeout', () => { req.destroy(); sub.sid = null; if (key === 'avt') sonosSubscriptionSID = null; setTimeout(() => subscribeService(key), 5000); });
+  req.end();
+}
+
+function unsubscribeService(key, hostIp) {
+  const sub = subs[key];
+  clearTimeout(sub.renewTimer); sub.renewTimer = null;
+  if (!sub.sid) return;
+  try {
+    const req = http.request({ hostname: hostIp || SONOS_IP, port: 1400, path: sub.path, method: 'UNSUBSCRIBE', headers: { 'SID': sub.sid }, timeout: 2000 });
+    req.on('error', () => {}); req.on('timeout', () => req.destroy()); req.end();
+  } catch (e) {}
+  sub.sid = null;
+  if (key === 'avt') sonosSubscriptionSID = null;
+}
+
+function subscribeSonosEvents() {
+  subscribeService('avt');
+  subscribeService('rc');
+  // Skyddsnät: kommer inget event på 5 s (t.ex. gammal firmware) → full synk
+  setTimeout(() => { if (avt.updatedAt === 0) { log.warn('⚠️ [SONOS] Inget event 5 s efter prenumeration — full synk'); handleSonosUPnPEvent({ source: 'no-event' }); } }, 5000);
+}
+
+function renewSonosSubscription() { renewService('avt'); renewService('rc'); }
+
+function startEventEngine() {
+  scheduleResync();
+  if (sanityTimer) clearInterval(sanityTimer);
+  sanityTimer = setInterval(() => handleSonosUPnPEvent({ source: 'sanity' }), SANITY_SYNC_MS);
+  sanityTimer.unref?.();
+}
+
+// ============ Positionstick — räknad, inte hämtad ============
+
 let positionBroadcastTimer = null;
 let cachedMediaType = 'track';
-let cachedBass = null;
-let cachedTreble = null;
-let cachedLoudness = null;
-let cachedCrossfade = null;
 
 // Reusable tick payload — mutated in place each second to avoid allocations
 const tickData = {
-  ok: true,
-  source: 'position-tick',
-  positionMillis: null,
-  durationMillis: null,
-  volume: null,
-  mute: null,
-  mediaType: 'track',
-  bass: null,
-  treble: null,
-  loudness: null,
-  crossfade: null,
-  trackName: null,
-  artistName: null,
-  albumName: null,
-  playbackState: 'PLAYBACK_STATE_IDLE',
-  groupId: null,
-  groupName: null,
+  ok: true, source: 'position-tick',
+  positionMillis: null, durationMillis: null, volume: null, mute: null, mediaType: 'track',
+  bass: null, treble: null, loudness: null, crossfade: null,
+  trackName: null, artistName: null, albumName: null,
+  playbackState: 'PLAYBACK_STATE_IDLE', groupId: null, groupName: null
 };
+
+function fillTick() {
+  tickData.positionMillis = currentPositionMs();
+  tickData.durationMillis = avt.trackDurationMs;
+  tickData.volume = rc.volume;
+  tickData.mute = rc.mute;
+  tickData.mediaType = avt.didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
+  cachedMediaType = tickData.mediaType;
+  tickData.bass = rc.bass;
+  tickData.treble = rc.treble;
+  tickData.loudness = rc.loudness;
+  tickData.crossfade = avt.crossfade;
+  tickData.trackName = avt.didl?.title || lastSonosEvent?.trackName || null;
+  tickData.artistName = avt.didl?.creator || lastSonosEvent?.artistName || null;
+  tickData.albumName = avt.didl?.album || lastSonosEvent?.albumName || null;
+  tickData.playbackState = lastSonosEvent?.playbackState || getSonosPlaybackState(avt.transportState);
+  tickData.groupId = cachedGroupId;
+  tickData.groupName = cachedGroupName;
+  return tickData;
+}
 
 function startPositionBroadcast() {
   if (positionBroadcastTimer) return;
-  positionBroadcastTimer = setInterval(async () => {
-    // Skip work entirely if nobody is listening (no SSE clients AND cloud push disabled)
+  positionBroadcastTimer = setInterval(() => {
     const cloudActive = cloudConfig.enabled && cloudConfig.positionUrl && cloudConfig.secret;
     if (sonosEventClients.length === 0 && !cloudActive) return;
-    try {
-      const [posXml, transXml, volXml, muteXml] = await Promise.all([
-        soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
-        soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
-        soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
-        soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null)
-      ]);
-      let volume = null;
-      if (volXml) { const v = extractTag(volXml, 'CurrentVolume'); if (v !== null) volume = parseInt(v, 10); }
-      let mute = null;
-      if (muteXml) { const v = extractTag(muteXml, 'CurrentMute'); if (v !== null) mute = v === '1'; }
-      const relTime = extractTag(posXml, 'RelTime');
-      const trackDuration = extractTag(posXml, 'TrackDuration');
-      const transportState = extractTag(transXml, 'CurrentTransportState');
-      const currentPlaybackState = getSonosPlaybackState(transportState);
-
-      // Force update lastSonosEvent's playback state if it has changed drastically (sync)
-      if (lastSonosEvent &&
-          (transportState === 'PLAYING' || transportState === 'PAUSED_PLAYBACK' || transportState === 'STOPPED')) {
-        lastSonosEvent.playbackState = currentPlaybackState;
-      }
-
-      // Mutate the reusable tick object in place
-      tickData.positionMillis = parseTime(relTime);
-      tickData.durationMillis = parseTime(trackDuration);
-      tickData.volume = volume;
-      tickData.mute = mute;
-      tickData.mediaType = cachedMediaType;
-      tickData.bass = cachedBass;
-      tickData.treble = cachedTreble;
-      tickData.loudness = cachedLoudness;
-      tickData.crossfade = cachedCrossfade;
-      tickData.trackName = lastSonosEvent?.trackName || null;
-      tickData.artistName = lastSonosEvent?.artistName || null;
-      tickData.albumName = lastSonosEvent?.albumName || null;
-      tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_IDLE';
-      tickData.groupId = cachedGroupId;
-      tickData.groupName = cachedGroupName;
-
-      if (sonosEventClients.length > 0) broadcastSSE(tickData);
-      if (cloudActive) cloudPushPosition(tickData);
-    } catch {
-      // SOAP failed (timeout/network) — still emit a heartbeat tick with last known
-      // state so downstream consumers (Lotus stale-watchdog etc.) don't flip to PAUSED
-      // due to transient Sonos hiccups. Position/volume left as previous values.
-      try {
-        tickData.trackName = lastSonosEvent?.trackName || null;
-        tickData.artistName = lastSonosEvent?.artistName || null;
-        tickData.albumName = lastSonosEvent?.albumName || null;
-        tickData.playbackState = lastSonosEvent?.playbackState || 'PLAYBACK_STATE_IDLE';
-        tickData.groupId = cachedGroupId;
-        tickData.groupName = cachedGroupName;
-        if (sonosEventClients.length > 0) broadcastSSE(tickData);
-        if (cloudActive) cloudPushPosition(tickData);
-      } catch { /* ignore */ }
-    }
+    if (avt.updatedAt === 0) return;
+    fillTick();
+    if (sonosEventClients.length > 0) broadcastSSE(tickData);
+    if (cloudActive) cloudPushPosition(tickData);
   }, process.env.POSITION_INTERVAL_MS ? parseInt(process.env.POSITION_INTERVAL_MS) : 1000);
 }
 
@@ -1100,31 +1454,29 @@ function stopPositionBroadcast() {
   if (positionBroadcastTimer) { clearInterval(positionBroadcastTimer); positionBroadcastTimer = null; }
 }
 
-// ============= /api/status — alltid-färsk cache =============
-let statusCache = null;
-let statusCacheAt = 0;
-let statusRefreshInFlight = false;
-let statusRefreshTimer = null;
-const STATUS_REFRESH_DEBOUNCE_MS = 150;
-
-function refreshStatusCacheSoon() {
-  if (statusRefreshTimer) return;
-  statusRefreshTimer = setTimeout(() => {
-    statusRefreshTimer = null;
-    if (statusRefreshInFlight) return;
-    statusRefreshInFlight = true;
-    const req = http.get(
-      { host: '127.0.0.1', port: ENGINE_PORT, path: '/api/status?fresh=1', timeout: 8000 },
-      (r) => { r.resume(); r.on('end', () => { statusRefreshInFlight = false; }); });
-    req.on('error', () => { statusRefreshInFlight = false; });
-    req.on('timeout', () => { try { req.destroy(); } catch (e) {} statusRefreshInFlight = false; });
-  }, STATUS_REFRESH_DEBOUNCE_MS);
+// ============ Status för konsumenter (lotus m.fl.) ============
+//
+// Gamla statuscachen (9 SOAP var 2:a sekund) är borta. Svaret byggs ur
+// eventtillståndet + beräknad position: ~0 ms, alltid färskt, inga anrop.
+function buildStatusPayload() {
+  const data = composeEventData('local-upnp', {
+    nextTrackName: lastSonosEvent?.nextTrackName ?? null,
+    nextArtistName: lastSonosEvent?.nextArtistName ?? null,
+    nextAlbumArtUri: lastSonosEvent?.nextAlbumArtUri ?? null
+  });
+  if (lastSonosEvent?.playbackState) data.playbackState = lastSonosEvent.playbackState;
+  delete data.timestamp;
+  return {
+    ...data,
+    currentPalette: cachedCurrentPalette || [],
+    nextPalette: cachedNextPalette || [],
+    cached: true,
+    cacheAgeMs: lastStateChangeAt ? Date.now() - lastStateChangeAt : null,
+    positionAnchorAgeMs: pos.anchorAt ? Date.now() - pos.anchorAt : null
+  };
 }
 
-// Periodisk uppdatering — UPnP-events fyrar bara vid förändring, så de räcker
-// inte för att hålla cachen aktuell vid stabil uppspelning.
-const STATUS_PERIODIC_MS = 2000;
-setInterval(() => { refreshStatusCacheSoon(); }, STATUS_PERIODIC_MS).unref?.();
+function refreshStatusCacheSoon() { /* händelsestyrt — inget att göra */ }
 
 function broadcastSSE(data) {
   const msg = `data: ${JSON.stringify(data)}\n\n`;
@@ -1133,36 +1485,31 @@ function broadcastSSE(data) {
   });
 }
 
+function resetEventState() {
+  for (const k of Object.keys(avt)) avt[k] = (k === 'updatedAt') ? 0 : null;
+  for (const k of Object.keys(rc)) rc[k] = (k === 'updatedAt') ? 0 : null;
+  pos.relMs = null; pos.absTime = null; pos.anchorAt = 0; pos.driftMs = 0;
+  nextTrackCache = { key: null, value: null };
+  lastPrefetchedNextArtUri = null;
+}
+
 // Re-subscribe with new IP
 function switchSonosIP(newIp, name, uuid) {
   log.info(`🔄 [SONOS] Switching from ${SONOS_IP} to ${newIp} (${name || 'unknown'})`);
-  
-  if (sonosSubscriptionSID) {
-    try {
-      const req = http.request({
-        hostname: SONOS_IP, port: 1400,
-        path: '/MediaRenderer/AVTransport/Event',
-        method: 'UNSUBSCRIBE',
-        headers: { 'SID': sonosSubscriptionSID },
-        timeout: 2000
-      });
-      req.on('error', () => {});
-      req.end();
-    } catch (e) {}
-    sonosSubscriptionSID = null;
-  }
-  
-  clearTimeout(sonosSubscriptionRenewTimer);
-  sonosSubscriptionRenewTimer = null;
+  const oldIp = SONOS_IP;
+  unsubscribeService('avt', oldIp);
+  unsubscribeService('rc', oldIp);
+  subs.avt.retries = 0; subs.rc.retries = 0;
   sonosSubscribeRetries = 0;
   lastSonosEvent = null;
   cachedGroupId = null;
   cachedGroupName = null;
-  
+  resetEventState();
+
   SONOS_IP = newIp;
   sonosConfig = { ...sonosConfig, sonosIp: newIp, sonosName: name || null, sonosUuid: uuid || null };
   saveSonosConfig(sonosConfig);
-  
+
   subscribeSonosEvents();
 }
 
@@ -1228,6 +1575,7 @@ const server = http.createServer(async (req, res) => {
         let status = 'ok';
         if (rssMB > 100) status = 'degraded';
         if (!sonosSubscriptionSID) status = 'degraded';
+        const events = { ...eventStats, rcSubscribed: !!subs.rc.sid, lastEventAt: lastStateChangeAt ? new Date(lastStateChangeAt).toISOString() : null, positionAnchors: pos.anchors, positionDriftMs: pos.driftMs };
         sendJson(res, {
           status,
           service: 'sonos-buddy-engine',
@@ -1241,6 +1589,7 @@ const server = http.createServer(async (req, res) => {
           timestamp: new Date().toISOString(),
           sonosIp: SONOS_IP,
           subscribed: !!sonosSubscriptionSID,
+          events,
           sseClients: sonosEventClients.length,
         });
         return;
@@ -1392,100 +1741,20 @@ const server = http.createServer(async (req, res) => {
       
       // GET /api/status (alias: /api/sonos — bakåtkompatibel)
       if (req.method === 'GET' && (pathname === '/api/status' || pathname === '/api/sonos')) {
-        // Alltid cachat svar om det finns — ingen TTL. Cachen hålls färsk av
-        // refreshStatusCacheSoon(). ?fresh=1 gör den fulla SOAP-hämtningen.
+        // Svaret byggs ur eventtillståndet + beräknad position: inga SOAP-anrop,
+        // ~0 ms, alltid färskt. ?fresh=1 tvingar en full SOAP-synk först.
         const wantFresh = url.searchParams && url.searchParams.get('fresh') === '1';
-        if (!wantFresh && statusCache) {
-          sendJson(res, { ...statusCache, cached: true, cacheAgeMs: Date.now() - statusCacheAt });
+        if (wantFresh || avt.updatedAt === 0) {
+          await handleSonosUPnPEvent({ source: wantFresh ? 'api-fresh' : 'api-first' });
+        }
+        if (avt.updatedAt === 0) {
+          sendJson(res, { ok: false, error: 'Inget tillstånd från högtalaren ännu' }, 503);
           return;
         }
-        try {
-          const [posXml, transXml, mediaXml, volXml, muteXml, bassXml, trebleXml, loudnessXml, crossfadeXml] = await Promise.all([
-            soapRequest(SOAP_GET_POSITION, 'GetPositionInfo'),
-            soapRequest(SOAP_GET_TRANSPORT, 'GetTransportInfo'),
-            soapRequest(SOAP_GET_MEDIA, 'GetMediaInfo'),
-            soapRequest(SOAP_GET_VOLUME, 'GetVolume', RC_PATH, RC_SERVICE).catch(() => null),
-            soapRequest(SOAP_GET_MUTE, 'GetMute', RC_PATH, RC_SERVICE).catch(() => null),
-            soapRequest(SOAP_GET_BASS, 'GetBass', RC_PATH, RC_SERVICE).catch(() => null),
-            soapRequest(SOAP_GET_TREBLE, 'GetTreble', RC_PATH, RC_SERVICE).catch(() => null),
-            soapRequest(SOAP_GET_LOUDNESS, 'GetLoudness', RC_PATH, RC_SERVICE).catch(() => null),
-            soapRequest(SOAP_GET_CROSSFADE, 'GetCrossfadeMode').catch(() => null)
-          ]);
-          
-          const parseIntTag = (xml, tag) => { if (!xml) return null; const v = extractTag(xml, tag); return v !== null ? parseInt(v, 10) : null; };
-          const parseBoolTag = (xml, tag) => { if (!xml) return null; const v = extractTag(xml, tag); return v !== null ? v === '1' : null; };
-          
-          const volume = parseIntTag(volXml, 'CurrentVolume');
-          const mute = parseBoolTag(muteXml, 'CurrentMute');
-          const bass = parseIntTag(bassXml, 'CurrentBass');
-          const treble = parseIntTag(trebleXml, 'CurrentTreble');
-          const loudness = parseBoolTag(loudnessXml, 'CurrentLoudness');
-          let crossfade = null;
-          if (crossfadeXml) { const cf = extractTag(crossfadeXml, 'CrossfadeMode'); if (cf !== null) crossfade = cf === '1'; }
-          
-          const relTime = extractTag(posXml, 'RelTime');
-          const trackDuration = extractTag(posXml, 'TrackDuration');
-          const trackNumber = extractTag(posXml, 'Track');
-          const trackURI = extractTag(posXml, 'TrackURI');
-          const absTime = extractTag(posXml, 'AbsTime');
-          const didl = extractDidl(posXml);
-          const transportState = extractTag(transXml, 'CurrentTransportState');
-          const currentTransportStatus = extractTag(transXml, 'CurrentTransportStatus');
-          const currentSpeed = extractTag(transXml, 'CurrentSpeed');
-          const playbackState = getSonosPlaybackState(transportState);
-          
-          let albumArtUri = null;
-          if (didl && didl.albumArtURI) {
-            const cleanUri = didl.albumArtURI.replace(/&amp;/g, '&');
-            albumArtUri = cleanUri.startsWith('/')
-              ? `http://${SONOS_IP}:1400${cleanUri}`
-              : cleanUri;
-          }
-          
-          const nrTracks = extractTag(mediaXml, 'NrTracks');
-          const currentURI = extractTag(mediaXml, 'CurrentURI');
-          const nextAVTransportURI = extractTag(mediaXml, 'NextAVTransportURI');
-          const playMedium = extractTag(mediaXml, 'PlayMedium');
-          const nextMeta = extractTag(mediaXml, 'NextAVTransportURIMetaData');
-          const { nextTrackName, nextArtistName, nextAlbumArtUri } = await resolveNextTrack(nextMeta, trackNumber, nrTracks);
-          const mediaType = didl?.upnpClass?.includes('audioBroadcast') ? 'radio' : 'track';
-          
-          const statusPayload = {
-            ok: true,
-            source: 'local-upnp',
-            playbackState,
-            positionMillis: parseTime(relTime),
-            durationMillis: parseTime(trackDuration),
-            trackName: didl ? didl.title : null,
-            artistName: didl ? didl.creator : null,
-            albumName: didl ? didl.album : null,
-            albumArtUri,
-            nextTrackName,
-            nextArtistName,
-            nextAlbumArtUri,
-            volume, mute, bass, treble, loudness,
-            mediaType,
-            trackNumber: trackNumber ? parseInt(trackNumber, 10) : null,
-            trackURI, absTime, currentSpeed, currentTransportStatus, crossfade,
-            nrTracks: nrTracks ? parseInt(nrTracks, 10) : null,
-            currentURI, nextAVTransportURI, playMedium,
-            streamContent: didl ? didl.streamContent : null,
-            radioShowMd: didl ? didl.radioShowMd : null,
-            originalTrackNumber: didl?.originalTrackNumber ? parseInt(didl.originalTrackNumber, 10) : null,
-            protocolInfo: didl ? didl.protocolInfo : null,
-            currentPalette: cachedCurrentPalette || [],
-            nextPalette: cachedNextPalette || []
-          };
-          statusCache = statusPayload;
-          statusCacheAt = Date.now();
-          sendJson(res, statusPayload);
-        } catch (err) {
-          log.error(`❌ Sonos status error: ${err.message}`);
-          sendJson(res, { ok: false, error: err.message }, 502);
-        }
+        sendJson(res, buildStatusPayload());
         return;
       }
-      
+
       // GET /api/getaa* – proxy album art from Sonos
       if (req.method === 'GET' && pathname.startsWith('/api/getaa')) {
         const sonosPath = pathname.replace('/api', '') + (url.search || '');
@@ -1548,16 +1817,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
-      // NOTIFY /api/upnp-callback
-      if (req.method === 'NOTIFY' && pathname === '/api/upnp-callback') {
-        // Drain body without buffering — we only need the byte count for logging
+      // NOTIFY /api/upnp-callback (AVTransport) och /api/upnp-callback-rc (RenderingControl)
+      // Kroppen ÄR tillståndet — parsas, inga SOAP-anrop.
+      if (req.method === 'NOTIFY' && (pathname === '/api/upnp-callback' || pathname === '/api/upnp-callback-rc')) {
+        const chunks = [];
         let bytes = 0;
-        req.on('data', chunk => { bytes += chunk.length; });
+        let tooBig = false;
+        req.on('data', chunk => { bytes += chunk.length; if (bytes > NOTIFY_MAX_BYTES) { tooBig = true; return; } chunks.push(chunk); });
         req.on('end', () => {
-          log.info(`📡 [SONOS] UPnP event received (${bytes} bytes)`);
           res.writeHead(200);
           res.end();
-          handleSonosUPnPEvent();
+          if (tooBig) { log.warn(`⚠️ [SONOS] NOTIFY ${bytes} B — för stor, ignorerad`); return; }
+          const body = Buffer.concat(chunks).toString('utf8');
+          if (pathname === '/api/upnp-callback') {
+            log.info(`📡 [SONOS] AVTransport-event (${bytes} B, SEQ ${req.headers.seq ?? '?'})`);
+            onAvtNotify(body, req.headers.seq ?? null);
+          } else {
+            log.debug(`📡 [SONOS] RenderingControl-event (${bytes} B)`);
+            onRcNotify(body);
+          }
         });
         return;
       }
@@ -1641,6 +1919,7 @@ async function main() {
   log.info(`📡 [SONOS] Starting UPnP event subscription to ${SONOS_IP}...`);
   subscribeSonosEvents();
   startPositionBroadcast();
+  startEventEngine();
   log.info(`📡 [SONOS] Position broadcast started`);
 
   // Spotify audio-features (client-credentials, optional)
@@ -1665,21 +1944,11 @@ async function main() {
     // Close SSE connections
     sonosEventClients.forEach(client => { try { client.end(); } catch (e) {} });
     sonosEventClients = [];
-    // Unsubscribe from Sonos events
-    if (sonosSubscriptionSID) {
-      try {
-        const req = http.request({
-          hostname: SONOS_IP, port: 1400,
-          path: '/MediaRenderer/AVTransport/Event',
-          method: 'UNSUBSCRIBE',
-          headers: { 'SID': sonosSubscriptionSID },
-          timeout: 2000
-        });
-        req.on('error', () => {});
-        req.end();
-      } catch (e) {}
-    }
-    clearTimeout(sonosSubscriptionRenewTimer);
+    // Unsubscribe from Sonos events (båda tjänsterna)
+    unsubscribeService('avt');
+    unsubscribeService('rc');
+    if (resyncTimer) clearTimeout(resyncTimer);
+    if (sanityTimer) clearInterval(sanityTimer);
     server.close(() => {
       log.info('✅ Server closed');
       process.exit(0);
