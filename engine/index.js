@@ -954,10 +954,10 @@ function trackKeyOf(state) {
 
 function currentPositionMs() {
   if (pos.relMs === null) return null;
-  if (avt.transportState !== 'PLAYING') return pos.relMs;
-  let p = pos.relMs + (Date.now() - pos.anchorAt);
-  if (avt.trackDurationMs) p = Math.min(p, avt.trackDurationMs);
-  return p;
+  // Radio/TV-strömmar saknar låtlängd och Sonos rapporterar ingen riktig position
+  // för dem — då räknar vi inte upp (gav sågtand 0→30 s och "drift −5 699 s").
+  if (avt.transportState !== 'PLAYING' || !(avt.trackDurationMs > 0)) return pos.relMs;
+  return Math.min(pos.relMs + (Date.now() - pos.anchorAt), avt.trackDurationMs);
 }
 
 // ETT GetPositionInfo — sätter ankaret. Fyller också luckor (låt-URI, DIDL) om
@@ -999,7 +999,9 @@ function scheduleResync() {
     resyncTimer = null;
     if (avt.transportState === 'PLAYING') {
       await anchorPosition('omkalibrering');
-      if (Math.abs(pos.driftMs) > 1500) log.warn(`⚠️ [POS] drift ${pos.driftMs} ms vid omkalibrering`);
+      const ad = Math.abs(pos.driftMs);
+      if (ad > 30000) log.info(`↔️ [POS] positionen hoppade ${Math.round(pos.driftMs / 1000)} s (seek eller missat event) — omförankrad`);
+      else if (ad > 1500) log.warn(`⚠️ [POS] drift ${pos.driftMs} ms vid omkalibrering`);
     }
     scheduleResync();
   }, POSITION_RESYNC_MS);
@@ -1234,7 +1236,11 @@ async function composeAndEmit(source, { trackChanged = false, stateChanged = fal
       const targetNext = cachedRawNextAlbumArtUri;
       extractPalette(targetNext, SONOS_IP, log)
         .then(palette => {
-          if (!palette || palette.length === 0) return;           // misslyckad hämtning ska inte nolla en fungerande palett
+          if (!palette || palette.length === 0) {                 // misslyckad hämtning (timeout) → nytt försök om 5 s, max 2
+            nextPaletteRetries = (lastPrefetchedNextArtUri === targetNext) ? nextPaletteRetries + 1 : 1;
+            if (nextPaletteRetries <= 2) setTimeout(() => { if (cachedRawNextAlbumArtUri === targetNext) { lastPrefetchedNextArtUri = null; composeAndEmit('next-palette-retry'); } }, 5000);
+            return;
+          }
           if (targetNext !== cachedRawNextAlbumArtUri) return;
           cachedNextPalette = palette;
           log.info('🎨 [PALETTE] Next track palette pre-cached');
@@ -1266,6 +1272,11 @@ async function composeAndEmit(source, { trackChanged = false, stateChanged = fal
     const eventData = composeEventData(source, next);
     const transportState = avt.transportState;
 
+    if ((source === 'sanity' || source === 'next-palette-retry') && lastSonosEvent && !stateDiffersFromLastEvent(eventData)) {
+      log.debug('[SONOS] sanity: oförändrat — ingen utsändning');
+      return;
+    }
+
     if (transportState === 'PLAYING' || transportState === 'PAUSED_PLAYBACK') {
       cancelPendingSonosIdle(`received ${transportState}`);
       emitSonosEvent(eventData);
@@ -1287,6 +1298,18 @@ async function composeAndEmit(source, { trackChanged = false, stateChanged = fal
   }
 }
 let lastPrefetchedNextArtUri = null;
+let nextPaletteRetries = 0;
+
+function stateDiffersFromLastEvent(eventData) {
+  const e = lastSonosEvent;
+  return e.playbackState !== eventData.playbackState
+    || e.trackURI !== eventData.trackURI
+    || e.trackNumber !== eventData.trackNumber
+    || e.trackName !== eventData.trackName
+    || e.volume !== eventData.volume
+    || e.mute !== eventData.mute
+    || e.nextTrackName !== eventData.nextTrackName;
+}
 
 // NOTIFY-kroppar → tillstånd
 let avtEventChain = Promise.resolve();
